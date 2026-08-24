@@ -41,7 +41,8 @@
       "Bash(node fixnbsp.mjs)",
       "Bash(echo \"=== tsc exit: $? ===\")",
       "Bash(git checkout *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit *)"
     ]
   }
 }
