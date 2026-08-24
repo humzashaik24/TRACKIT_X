@@ -1,0 +1,50 @@
+{
+  "expo": {
+    "name": "Trackit X",
+    "slug": "trackit-x",
+    "version": "0.1.0",
+    "orientation": "default",
+    "icon": "./assets/images/icon.png",
+    "scheme": "trackitx",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#06070A",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.trackitx.app"
+    },
+    "android": {
+      "package": "com.trackitx.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#06070A",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "single",
+      "bundler": "metro",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#06070A",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 96
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      }
+    }
+  }
+}

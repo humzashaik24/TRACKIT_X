@@ -1,0 +1,8 @@
+node_modules/
+.expo/
+dist/
+coverage/
+supabase/.branches/
+supabase/.temp/
+package-lock.json
+assets/
