@@ -44,6 +44,12 @@ import {
 } from '@/utils/format';
 
 const MINUS = '−';
+/**
+ * The formatters join a value to its unit with U+00A0 on purpose, so `45 MB` can
+ * never wrap into `45` on one line and `MB` on the next. Asserting a plain space
+ * here would be asserting the bug.
+ */
+const NBSP = '\u00A0';
 
 beforeEach(() => {
   resetFormatting();
@@ -105,7 +111,9 @@ describe('minor units', () => {
 
 describe('formatMoney', () => {
   it('renders stored paise as rupees', () => {
-    expect(digitsOf(formatMoney(1_250_00))).toBe('1,25,000.00');
+    // 12,500,000 paise is ₹1,25,000.00 — grouped 2,2,3 from the right, the lakh
+    // system, not 1,250,000.00.
+    expect(digitsOf(formatMoney(1_25_000_00))).toBe('1,25,000.00');
   });
 
   it('keeps both decimal places, because a payslip is reconciled', () => {
@@ -136,7 +144,7 @@ describe('formatMoney', () => {
   });
 
   it('omits currency entirely on request, for a column with a header', () => {
-    const bare = formatMoney(100_00, { display: 'none' });
+    const bare = formatMoney(10_000_00, { display: 'none' });
     expect(bare).toBe('10,000.00');
   });
 
@@ -171,10 +179,11 @@ describe('formatMoneyCompact', () => {
 });
 
 describe('parseMoneyToMinorUnits', () => {
-  it('parses plain input', () => {
+  it('parses a plain decimal', () => {
     expect(parseMoneyToMinorUnits('1200')).toBe(120_000);
     expect(parseMoneyToMinorUnits('1200.50')).toBe(120_050);
     expect(parseMoneyToMinorUnits('0.05')).toBe(5);
+    expect(parseMoneyToMinorUnits('.05')).toBe(5);
   });
 
   it('parses without float multiplication error', () => {
@@ -182,7 +191,7 @@ describe('parseMoneyToMinorUnits', () => {
     // the parse is done on the string.
     expect(parseMoneyToMinorUnits('19.99')).toBe(1999);
     expect(parseMoneyToMinorUnits('0.29')).toBe(29);
-    expect(parseMoneyToMinorUnits('1.005')).toBe(100);
+    expect(parseMoneyToMinorUnits('8.11')).toBe(811);
     expect(Number.isInteger(parseMoneyToMinorUnits('8.11') as number)).toBe(true);
   });
 
@@ -195,15 +204,60 @@ describe('parseMoneyToMinorUnits', () => {
     }
   });
 
-  it('ignores grouping separators and currency decoration', () => {
+  it('reads grouping as grouping, and ignores currency decoration', () => {
+    expect(parseMoneyToMinorUnits('1,000')).toBe(100_000);
     expect(parseMoneyToMinorUnits('₹1,25,000.00')).toBe(125_000_00);
+    expect(parseMoneyToMinorUnits('1,234,567.89')).toBe(123_456_789);
     expect(parseMoneyToMinorUnits('  1 200,50  ')).toBe(120_050);
     expect(parseMoneyToMinorUnits('INR 45.00')).toBe(4500);
   });
 
+  it('accepts both Western and Indian grouping, and no other run length', () => {
+    expect(parseMoneyToMinorUnits('12,34,567')).toBe(1_234_567_00);
+    expect(parseMoneyToMinorUnits('1,234,567')).toBe(1_234_567_00);
+    // Four digits in a run is not grouping in any convention.
+    expect(parseMoneyToMinorUnits('1,2345')).toBeUndefined();
+  });
+
   it('handles a locale that groups with dots', () => {
     // `1.234,56` is one thousand two hundred thirty-four and fifty-six, not 1.23.
+    // Both separator characters are present, so the rightmost is the decimal and no
+    // locale lookup is needed to know it.
     expect(parseMoneyToMinorUnits('1.234,56')).toBe(123_456);
+  });
+
+  it('lets the locale settle a genuinely ambiguous single separator', () => {
+    // `1.005` has exactly the shape of `1,000` — one separator, three digits after
+    // it. Nothing structural distinguishes them; only the locale can.
+    expect(parseMoneyToMinorUnits('1,000')).toBe(100_000);
+    expect(parseMoneyToMinorUnits('1.005')).toBeUndefined();
+
+    configureFormatting({ locale: 'de-DE' });
+    // German groups with a dot, so there `1.005` is one thousand and five…
+    expect(parseMoneyToMinorUnits('1.005')).toBe(100_500);
+    // …and divides with a comma, so `1,005` is over-precise and refused instead.
+    expect(parseMoneyToMinorUnits('1,005')).toBeUndefined();
+  });
+
+  it('refuses more precision than the currency has, rather than inflating it', () => {
+    // THE defect this guards. Treating the separator as grouping read ₹1.005 as
+    // ₹1,005 and ₹1.0055 as ₹10,055 — a thousandfold overstatement in a money
+    // field, arrived at silently and stored as fact.
+    expect(parseMoneyToMinorUnits('1.005')).toBeUndefined();
+    expect(parseMoneyToMinorUnits('1.0055')).toBeUndefined();
+    expect(parseMoneyToMinorUnits('1234.567')).toBeUndefined();
+    expect(parseMoneyToMinorUnits('0.001')).toBeUndefined();
+    // Quietly truncating to ₹1.00 is also an alteration the user did not make.
+    expect(parseMoneyToMinorUnits('1.005')).not.toBe(100);
+    // A zero-decimal currency has no fraction to hold at all.
+    expect(parseMoneyToMinorUnits('1000.5', 'JPY')).toBeUndefined();
+  });
+
+  it('rejects a separator pattern no convention produces', () => {
+    const malformed = ['1..2', '1.2.3', '1,,000', '12.34.56', '1.2,3.4', '1-2', '--5', '1+2'];
+    for (const input of malformed) {
+      expect(parseMoneyToMinorUnits(input)).toBeUndefined();
+    }
   });
 
   it('reads a minus in either glyph', () => {
@@ -213,6 +267,7 @@ describe('parseMoneyToMinorUnits', () => {
 
   it('scales to the currency, not always by a hundred', () => {
     expect(parseMoneyToMinorUnits('1000', 'JPY')).toBe(1000);
+    // KWD has three places, so three trailing digits are a fraction, not a group.
     expect(parseMoneyToMinorUnits('1.500', 'KWD')).toBe(1500);
   });
 
@@ -224,6 +279,9 @@ describe('parseMoneyToMinorUnits', () => {
     expect(parseMoneyToMinorUnits('abc')).toBeUndefined();
     expect(parseMoneyToMinorUnits('-')).toBeUndefined();
     expect(parseMoneyToMinorUnits('₹')).toBeUndefined();
+    // A separator with no digit anywhere is not a zero either.
+    expect(parseMoneyToMinorUnits('.')).toBeUndefined();
+    expect(parseMoneyToMinorUnits(',')).toBeUndefined();
   });
 
   it('refuses an amount too large to hold exactly', () => {
@@ -267,12 +325,12 @@ describe('percentages', () => {
     // Margin 20% → 23% rose three points. Calling that "3%" is the classic error;
     // the two functions exist so a caller has to choose.
     expect(formatPercent(0.03)).toBe('3.0%');
-    expect(formatPercentagePoints(3)).toBe('+3.0 pp');
+    expect(formatPercentagePoints(3)).toBe(`+3.0${NBSP}pp`);
   });
 
   it('signs points by default, because a point change is always a comparison', () => {
-    expect(formatPercentagePoints(-2.5)).toBe(`${MINUS}2.5 pp`);
-    expect(formatPercentagePoints(2.5, { signed: false })).toBe('2.5 pp');
+    expect(formatPercentagePoints(-2.5)).toBe(`${MINUS}2.5${NBSP}pp`);
+    expect(formatPercentagePoints(2.5, { signed: false })).toBe(`2.5${NBSP}pp`);
   });
 
   it('controls precision', () => {
@@ -295,31 +353,31 @@ describe('formatDelta', () => {
 
 describe('formatQuantity and countLabel', () => {
   it('agrees the noun with the count', () => {
-    expect(formatQuantity(1, 'unit')).toBe('1 unit');
-    expect(formatQuantity(40, 'unit')).toBe('40 units');
-    expect(formatQuantity(0, 'unit')).toBe('0 units');
+    expect(formatQuantity(1, 'unit')).toBe(`1${NBSP}unit`);
+    expect(formatQuantity(40, 'unit')).toBe(`40${NBSP}units`);
+    expect(formatQuantity(0, 'unit')).toBe(`0${NBSP}units`);
   });
 
   it('takes an explicit plural for an irregular noun', () => {
-    expect(formatQuantity(3, 'person', 'people')).toBe('3 people');
+    expect(formatQuantity(3, 'person', 'people')).toBe(`3${NBSP}people`);
     expect(countLabel(1, 'person', 'people')).toBe('1 person');
   });
 
   it('treats a negative one as singular', () => {
-    expect(formatQuantity(-1, 'unit')).toBe(`${MINUS}1 unit`);
+    expect(formatQuantity(-1, 'unit')).toBe(`${MINUS}1${NBSP}unit`);
   });
 });
 
 describe('formatFileSize', () => {
   it('steps through the units', () => {
-    expect(formatFileSize(512)).toBe('512 B');
-    expect(formatFileSize(2048)).toBe('2.0 KB');
-    expect(formatFileSize(5 * 1024 * 1024)).toBe('5.0 MB');
-    expect(formatFileSize(1024 ** 4)).toBe('1.0 TB');
+    expect(formatFileSize(512)).toBe(`512${NBSP}B`);
+    expect(formatFileSize(2048)).toBe(`2.0${NBSP}KB`);
+    expect(formatFileSize(5 * 1024 * 1024)).toBe(`5.0${NBSP}MB`);
+    expect(formatFileSize(1024 ** 4)).toBe(`1.0${NBSP}TB`);
   });
 
   it('drops the decimal once the figure is large enough not to need it', () => {
-    expect(formatFileSize(45 * 1024 * 1024)).toBe('45 MB');
+    expect(formatFileSize(45 * 1024 * 1024)).toBe(`45${NBSP}MB`);
   });
 
   it('rejects a negative size', () => {
@@ -330,6 +388,13 @@ describe('formatFileSize', () => {
 describe('dates', () => {
   // A fixed instant, so nothing here depends on when the suite runs.
   const instant = '2026-08-23T09:30:00.000Z';
+
+  /**
+   * Both signs of UTC offset, plus the extremes. A calendar date rendered in
+   * Kiritimati (+14) and in Midway (−11) is the same calendar date; an instant is
+   * not. Every date-only assertion runs across all four.
+   */
+  const ZONES = ['UTC', 'Asia/Kolkata', 'Pacific/Kiritimati', 'America/New_York', 'Pacific/Midway'];
 
   beforeEach(() => {
     configureFormatting({ locale: 'en-GB', timeZone: 'UTC' });
@@ -348,11 +413,23 @@ describe('dates', () => {
     expect(formatDate(Date.parse(instant))).toContain('Aug');
   });
 
-  it('anchors a bare date at UTC so it does not slip a day', () => {
-    // `new Date('2026-08-23')` is midnight UTC; formatting it in a western zone
-    // without anchoring would render 22 Aug.
-    configureFormatting({ timeZone: 'America/New_York' });
-    expect(formatDate('2026-08-23')).toContain('23');
+  it('renders a Postgres date as the calendar date it is, in every zone', () => {
+    // A `date` column carries no time and no zone. An invoice dated the 23rd is
+    // dated the 23rd in every office on earth, so converting it into the reader's
+    // zone is a category error — and west of UTC it renders the day before.
+    for (const timeZone of ZONES) {
+      configureFormatting({ timeZone });
+      expect(formatDate('2026-08-23')).toBe('23 Aug 2026');
+    }
+  });
+
+  it('still converts a timestamp, which is an instant and not a calendar date', () => {
+    // The distinction cuts both ways: 20:00 UTC on the 23rd genuinely IS the 24th in
+    // Kolkata, and a `timestamptz` must be shown on the reader's calendar.
+    configureFormatting({ timeZone: 'Asia/Kolkata' });
+    expect(formatDate('2026-08-23T20:00:00.000Z')).toBe('24 Aug 2026');
+    configureFormatting({ timeZone: 'UTC' });
+    expect(formatDate('2026-08-23T20:00:00.000Z')).toBe('23 Aug 2026');
   });
 
   it('renders the shorter and longer forms', () => {
@@ -378,10 +455,41 @@ describe('dates', () => {
     const sameMonth = formatDateRange('2026-08-01', '2026-08-31');
     // The month is stated once, on the end.
     expect(sameMonth.match(/Aug/g)).toHaveLength(1);
+    expect(sameMonth).toBe(`1${NBSP}–${NBSP}31 Aug 2026`);
+
+    const sameYear = formatDateRange('2026-08-28', '2026-09-03');
+    // Two months, one year: the start keeps its month, the year is stated once.
+    expect(sameYear.startsWith(`28 Aug${NBSP}–${NBSP}`)).toBe(true);
+    expect(sameYear.match(/2026/g)).toHaveLength(1);
 
     const crossYear = formatDateRange('2025-12-28', '2026-01-03');
     expect(crossYear).toContain('2025');
     expect(crossYear).toContain('2026');
+  });
+
+  it('states a single day once, not as a range from itself to itself', () => {
+    expect(formatDateRange('2026-08-23', '2026-08-23')).toBe('23 Aug 2026');
+  });
+
+  it('holds a date-only range on its own calendar days in every zone', () => {
+    // The defect this guards: both ends were coerced to an instant before being
+    // formatted, so any negative UTC offset moved the whole range back a day and a
+    // month-long period was reported as starting on the previous month's last day.
+    for (const timeZone of ZONES) {
+      configureFormatting({ timeZone });
+      expect(formatDateRange('2026-08-01', '2026-08-31')).toBe(`1${NBSP}–${NBSP}31 Aug 2026`);
+    }
+  });
+
+  it('converts a timestamp range, where the zone genuinely decides the day', () => {
+    // 20:00 and 21:00 UTC on the 23rd are both past midnight in Kolkata, so in that
+    // office this is a single day — the 24th — and in UTC it is two hours of the 23rd.
+    const from = '2026-08-23T20:00:00.000Z';
+    const to = '2026-08-23T21:00:00.000Z';
+    configureFormatting({ timeZone: 'Asia/Kolkata' });
+    expect(formatDateRange(from, to)).toBe('24 Aug 2026');
+    configureFormatting({ timeZone: 'UTC' });
+    expect(formatDateRange(from, to)).toBe('23 Aug 2026');
   });
 
   it('shows a missing or unparseable date as missing', () => {
@@ -441,13 +549,13 @@ describe('formatRelativeTime', () => {
 describe('formatDuration', () => {
   it('reads as hours and minutes, never as decimal hours', () => {
     // "7.5 hours" invites the reading "7 hours 50 minutes".
-    expect(formatDuration(450)).toBe('7h 30m');
+    expect(formatDuration(450)).toBe(`7h${NBSP}30m`);
     expect(formatDuration(45)).toBe('45m');
     expect(formatDuration(120)).toBe('2h');
   });
 
   it('drops minutes once days are in play', () => {
-    expect(formatDuration(3253)).toBe('2d 6h');
+    expect(formatDuration(3253)).toBe(`2d${NBSP}6h`);
   });
 
   it('shows a zero duration as zero, not as missing', () => {
@@ -456,7 +564,7 @@ describe('formatDuration', () => {
   });
 
   it('signs a negative duration', () => {
-    expect(formatDuration(-90)).toBe(`${MINUS}1h 30m`);
+    expect(formatDuration(-90)).toBe(`${MINUS}1h${NBSP}30m`);
   });
 
   it('reports a broken duration as missing', () => {
