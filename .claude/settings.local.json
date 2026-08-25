@@ -42,7 +42,13 @@
       "Bash(echo \"=== tsc exit: $? ===\")",
       "Bash(git checkout *)",
       "Bash(git add *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "WebFetch(domain:docs.expo.dev)",
+      "Bash(node -e \"console.log\\(require\\('/c/TRACKIT_X/node_modules/expo-router/package.json'\\).version\\)\")",
+      "Bash(node -e \"console.log\\(require\\('expo-router/package.json'\\).version\\)\")",
+      "Bash(node -e \"const p=require\\('expo-router/package.json'\\); console.log\\(JSON.stringify\\({main:p.main,types:p.types,exports:p.exports},null,2\\)\\)\")",
+      "Bash(node -e \"console.log\\(require\\('@supabase/supabase-js/package.json'\\).version\\)\")",
+      "Bash(echo \"--- exit: $? ---\")"
     ]
   }
 }
