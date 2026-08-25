@@ -48,7 +48,11 @@
       "Bash(node -e \"console.log\\(require\\('expo-router/package.json'\\).version\\)\")",
       "Bash(node -e \"const p=require\\('expo-router/package.json'\\); console.log\\(JSON.stringify\\({main:p.main,types:p.types,exports:p.exports},null,2\\)\\)\")",
       "Bash(node -e \"console.log\\(require\\('@supabase/supabase-js/package.json'\\).version\\)\")",
-      "Bash(echo \"--- exit: $? ---\")"
+      "Bash(echo \"--- exit: $? ---\")",
+      "Bash(node -e \"const p=require\\('@supabase/supabase-js/package.json'\\); console.log\\(JSON.stringify\\({version:p.version,main:p.main,types:p.types,exports:p.exports},null,2\\)\\)\")",
+      "Bash(node -e \"const p=require\\('./node_modules/@expo/cli/package.json'\\);console.log\\(p.version\\)\")",
+      "Bash(awk '/export const textStyles|export const typography/,0' src/design-system/tokens/typography.ts)",
+      "Bash(git check-ignore *)"
     ]
   }
 }

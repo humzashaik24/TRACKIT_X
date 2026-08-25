@@ -297,13 +297,13 @@ comment on function public.is_organization_member(uuid) is
 
 -- Numeric authority, so "at least an admin" is a comparison rather than a list
 -- of enum values repeated in every policy.
-create or replace function public.organization_role_rank(role public.organization_role)
+create or replace function public.organization_role_rank(member_role public.organization_role)
 returns integer
 language sql
 immutable
 set search_path = ''
 as $$
-  select case role
+  select case member_role
     when 'owner' then 4
     when 'admin' then 3
     when 'manager' then 2
@@ -583,11 +583,16 @@ create policy organization_members_delete_admins
 -- the first membership row before any membership exists to authorise it.
 -- ---------------------------------------------------------------------------
 
+-- Parameters carry a `p_` prefix because three of them would otherwise share a
+-- name with a column of the table being inserted into. PL/pgSQL substitutes
+-- variables into the VALUES expressions, so a bare `business_type` there reads
+-- as the parameter while the identical word in the column list reads as the
+-- column — legal, but a trap for whoever edits this next.
 create or replace function public.create_organization(
-  organization_name text,
-  business_type public.business_type,
-  timezone text,
-  currency text
+  p_name text,
+  p_business_type public.business_type,
+  p_timezone text,
+  p_currency text
 )
 returns public.organizations
 language plpgsql
@@ -609,10 +614,10 @@ begin
     name, business_type, timezone, currency, created_by
   )
   values (
-    btrim(organization_name),
-    business_type,
-    btrim(timezone),
-    upper(btrim(currency)),
+    btrim(p_name),
+    p_business_type,
+    btrim(p_timezone),
+    upper(btrim(p_currency)),
     actor
   )
   returning org.* into created;
