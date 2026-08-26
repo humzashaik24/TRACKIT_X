@@ -69,7 +69,16 @@
       "Bash(grep -c '^do \\\\$\\\\$' supabase/tests/rls_isolation.sql)",
       "Bash(echo \"do \\\\$\\\\$   : $\\(grep -c '^do \\\\$\\\\$' supabase/tests/rls_isolation.sql\\)\")",
       "Bash(grep -c '^\\\\$\\\\$;' supabase/tests/rls_isolation.sql)",
-      "Bash(echo \"\\\\$\\\\$;    : $\\(grep -c '^\\\\$\\\\$;' supabase/tests/rls_isolation.sql\\)\")"
+      "Bash(echo \"\\\\$\\\\$;    : $\\(grep -c '^\\\\$\\\\$;' supabase/tests/rls_isolation.sql\\)\")",
+      "Bash(timeout 90 npx --no-install supabase projects list)",
+      "Bash(timeout 45 docker info --format '{{.ServerVersion}} / containers={{.Containers}} / running={{.ContainersRunning}}')",
+      "Bash(timeout 45 docker ps -a --format '{{.Names}}\\\\t{{.Image}}\\\\t{{.Status}}')",
+      "Bash(timeout 45 docker volume ls)",
+      "Bash(timeout 60 docker images --format '{{.Repository}}:{{.Tag}}\\\\t{{.Size}}')",
+      "Bash(timeout 60 docker images -q)",
+      "Bash(timeout 45 docker ps -a --filter 'name=supabase' --format '{{.Names}} {{.Status}}')",
+      "Bash(timeout 45 docker volume ls --filter 'name=supabase' --format '{{.Name}}')",
+      "Bash(cd C:/TRACKIT_X && echo '=== git status \\(must be empty\\) ==='; git status --short; echo \"[end of status]\"; echo; echo '=== HEAD ==='; git log --oneline -3; echo; echo '=== CLI-written gitignored caches \\(disclosure\\) ==='; ls -la supabase/.temp/ | tail -2; ls -la \"$HOME/.supabase/telemetry.json\")"
     ]
   }
 }
