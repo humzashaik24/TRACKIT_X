@@ -12,56 +12,72 @@
  *
  * The count is `head: true` — no rows travel, only the number, which also means RLS
  * filters it to this organization before Postgres counts.
+ *
+ * The rules live in `./snapshot`; this file is the React binding around them.
  */
 import { useCallback, useEffect, useState } from 'react';
 
 import * as organizations from '@/services/organizationService';
-import type { AppError } from '@/utils/errors';
 
-export type SnapshotStatus = 'loading' | 'ready' | 'error';
+import {
+  deriveSnapshot,
+  toCounted,
+  type CountedFor,
+  type SnapshotStatus,
+  type SnapshotView,
+} from './snapshot';
 
-export interface WorkforceSnapshot {
-  readonly status: SnapshotStatus;
-  /** People with access to this organization. `null` unless `status === 'ready'`. */
-  readonly memberCount: number | null;
-  /** Present only while `status === 'error'`. Render `userMessage`. */
-  readonly error: AppError | null;
+export { deriveSnapshot, toCounted };
+export type { CountedFor, SnapshotStatus, SnapshotView };
+
+export interface WorkforceSnapshot extends SnapshotView {
   refresh(): Promise<void>;
 }
 
 export function useWorkforceSnapshot(organizationId: string | null): WorkforceSnapshot {
-  const [status, setStatus] = useState<SnapshotStatus>('loading');
-  const [memberCount, setMemberCount] = useState<number | null>(null);
-  const [error, setError] = useState<AppError | null>(null);
+  const [counted, setCounted] = useState<CountedFor | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const load = useCallback(async (): Promise<void> => {
-    if (organizationId === null) {
-      // No organization selected yet. Not an error — there is simply nothing to
-      // count, and reporting a failure here would be noise during startup.
-      setStatus('loading');
-      setMemberCount(null);
-      setError(null);
-      return;
-    }
+  /**
+   * Reads the count when the organization changes.
+   *
+   * The state is committed from the promise callback rather than by awaiting a
+   * function that sets it: the database is an external system answering later, and
+   * setting state when it answers is the one shape that does not cascade a second
+   * render pass out of the effect itself. `cancelled` covers the case where the
+   * organization changes, or the screen unmounts, before the answer arrives — a count
+   * for a business the user has navigated away from must never be committed.
+   */
+  useEffect(() => {
+    if (organizationId === null) return;
 
-    setStatus('loading');
-    setError(null);
+    let cancelled = false;
+    void organizations.countMembers(organizationId).then((result) => {
+      if (cancelled) return;
+      setCounted(toCounted(organizationId, result));
+    });
 
-    const result = await organizations.countMembers(organizationId);
-    if (!result.ok) {
-      setError(result.error);
-      setMemberCount(null);
-      setStatus('error');
-      return;
-    }
-
-    setMemberCount(result.value);
-    setStatus('ready');
+    return () => {
+      cancelled = true;
+    };
   }, [organizationId]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  /**
+   * Explicit refresh. Safe to set state synchronously here — this is an event
+   * handler, not an effect — and the flag is what drives the pull-to-refresh
+   * spinner while the existing number stays visible.
+   */
+  const refresh = useCallback(async (): Promise<void> => {
+    if (organizationId === null) return;
 
-  return { status, memberCount, error, refresh: load };
+    setIsRefreshing(true);
+    try {
+      const result = await organizations.countMembers(organizationId);
+      setCounted(toCounted(organizationId, result));
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [organizationId]);
+
+  return { ...deriveSnapshot(counted, organizationId, isRefreshing), refresh };
 }

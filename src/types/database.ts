@@ -55,7 +55,20 @@ type Timestamp = string;
 /** A `uuid` column. Named for readability at call sites, not for safety. */
 type Uuid = string;
 
-export interface OrganizationRow {
+/**
+ * ⚠ Every type below is a `type` alias, never an `interface`.
+ *
+ * postgrest-js constrains a schema with `Row: Record<string, unknown>`, and
+ * TypeScript only gives *type aliases* an implicit index signature — an
+ * `interface` is not assignable to `Record<string, unknown>` no matter what its
+ * members are. Declare these as interfaces and `Database['public']` silently fails
+ * `extends GenericSchema`, the client falls back to its untyped overloads, and
+ * every column read reports "Property 'x' does not exist on type 'never'".
+ *
+ * `supabase gen types typescript` emits type aliases for exactly this reason, so
+ * this also keeps the eventual swap to the generated file a rename.
+ */
+export type OrganizationRow = {
   readonly id: Uuid;
   readonly name: string;
   readonly business_type: BusinessType;
@@ -66,9 +79,9 @@ export interface OrganizationRow {
   readonly created_by: Uuid | null;
   readonly created_at: Timestamp;
   readonly updated_at: Timestamp;
-}
+};
 
-export interface OrganizationMemberRow {
+export type OrganizationMemberRow = {
   readonly id: Uuid;
   readonly organization_id: Uuid;
   readonly user_id: Uuid;
@@ -77,9 +90,9 @@ export interface OrganizationMemberRow {
   readonly permissions: readonly string[];
   readonly created_at: Timestamp;
   readonly updated_at: Timestamp;
-}
+};
 
-export interface Database {
+export type Database = {
   public: {
     Tables: {
       organizations: {
@@ -139,7 +152,17 @@ export interface Database {
         ];
       };
     };
-    Views: Record<string, never>;
+    /**
+     * `{ [_ in never]: never }`, not `Record<string, never>`.
+     *
+     * This is not a style choice. postgrest-js resolves a relation name against
+     * `Tables & Views`, so with `Record<string, never>` EVERY name also exists as
+     * a view whose row type is `never` — and `OrganizationRow & never` is `never`.
+     * The symptom is every column on every query reporting
+     * "Property 'x' does not exist on type 'never'". An empty mapped type has no
+     * keys at all, which is what "there are no views" actually means.
+     */
+    Views: { [_ in never]: never };
     Functions: {
       /**
        * Creates an organization and its owner membership in one transaction.
@@ -173,9 +196,10 @@ export interface Database {
       business_type: BusinessType;
       organization_role: OrganizationRole;
     };
-    CompositeTypes: Record<string, never>;
+    /** Empty mapped type for the same reason as `Views` above. */
+    CompositeTypes: { [_ in never]: never };
   };
-}
+};
 
 /** Convenience aliases so features do not spell out the nested lookup. */
 export type Tables<Name extends keyof Database['public']['Tables']> =

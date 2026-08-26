@@ -52,7 +52,20 @@
       "Bash(node -e \"const p=require\\('@supabase/supabase-js/package.json'\\); console.log\\(JSON.stringify\\({version:p.version,main:p.main,types:p.types,exports:p.exports},null,2\\)\\)\")",
       "Bash(node -e \"const p=require\\('./node_modules/@expo/cli/package.json'\\);console.log\\(p.version\\)\")",
       "Bash(awk '/export const textStyles|export const typography/,0' src/design-system/tokens/typography.ts)",
-      "Bash(git check-ignore *)"
+      "Bash(git check-ignore *)",
+      "Bash(tee _tsc.log)",
+      "Bash(node -p \"require\\('./node_modules/@supabase/supabase-js/package.json'\\).version\")",
+      "Bash(node -p \"require\\('./node_modules/@supabase/postgrest-js/package.json'\\).version\")",
+      "Bash(node -p \"JSON.stringify\\(require\\('./package.json'\\).scripts,null,2\\)\")",
+      "Bash(node -p \"const p=require\\('./node_modules/expo/package.json'\\); JSON.stringify\\({v:p.version,cli:p.dependencies['@expo/cli'],bin:p.bin},null,2\\)\")",
+      "Bash(node -e \"try{console.log\\(require.resolve\\('@expo/cli/build/bin/cli'\\)\\)}catch\\(e\\){console.log\\('MISSING:',e.code\\)}\")",
+      "Bash(node -e \"const l=require\\('./package-lock.json'\\); const k=Object.keys\\(l.packages||{}\\).filter\\(p=>p.includes\\('@expo/cli'\\)\\); console.log\\(k.length?k:'not in lockfile'\\); if\\(k.length\\) console.log\\(JSON.stringify\\(l.packages[k[0]].version\\)\\);\")",
+      "Bash(node -e \"const m=require\\('./node_modules/expo/node_modules/@expo/cli/build/src/start/server/type-generation/routes.js'\\); console.log\\(Object.keys\\(m\\)\\);\")",
+      "Bash(node -p \"JSON.stringify\\(require\\('./node_modules/@supabase/postgrest-js/package.json'\\).exports,null,2\\)\")",
+      "Bash(echo \"=== exit: $? ===\")",
+      "Bash(grep -o \"pathname: \\\\`[^\\\\`]*\\\\`\" .expo/types/router.d.ts)",
+      "Bash(node -p \"require\\('./node_modules/eslint-plugin-react-hooks/package.json'\\).version\")",
+      "Bash(node -e \"const p=require\\('C:/TRACKIT_X/package.json'\\); console.log\\(JSON.stringify\\(p.jest,null,2\\)\\); console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\)\")"
     ]
   }
 }

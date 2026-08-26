@@ -39,11 +39,10 @@ import {
   useStyles,
   VStack,
 } from '@/design-system';
-import { BUSINESS_TYPE_LABELS, ROLE_LABELS } from '@/domain/organization';
+import { BUSINESS_TYPE_LABELS, isBusinessType, ROLE_LABELS } from '@/domain/organization';
 import { DashboardSection } from '@/features/dashboard/DashboardSection';
 import { useWorkforceSnapshot } from '@/features/dashboard/useWorkforceSnapshot';
 import { countLabel, formatNumber } from '@/utils/format';
-import { isBusinessType } from '@/domain/organization';
 
 const styles = createStyles((theme) => ({
   grid: {
@@ -119,7 +118,7 @@ export default function DashboardScreen() {
       edges={['top', 'bottom']}
       gap={sectionGap}
       maxWidth="none"
-      refreshing={workforce.status === 'loading' && workforce.memberCount !== null}
+      refreshing={workforce.isRefreshing}
       onRefresh={() => {
         void refresh();
       }}

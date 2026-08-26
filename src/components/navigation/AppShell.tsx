@@ -36,7 +36,12 @@ import {
   VStack,
 } from '@/design-system';
 import { ROLE_LABELS } from '@/domain/organization';
-import { activeDestination, destinations, type Destination } from '@/navigation/destinations';
+import {
+  activeDestination,
+  destinations,
+  type Destination,
+  type DestinationPath,
+} from '@/navigation/destinations';
 
 export interface AppShellProps {
   children: ReactNode;
@@ -131,7 +136,7 @@ const styles = createStyles((theme) => ({
   },
 }));
 
-function navigate(path: string): void {
+function navigate(path: DestinationPath): void {
   // `replace`, not `push`: the six destinations are peers, so stacking them would
   // build a back stack of sideways moves and make the hardware back button walk
   // through a history the user never intended to create.

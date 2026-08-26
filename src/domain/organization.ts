@@ -22,6 +22,14 @@
 import type { BusinessType, OrganizationRole } from '@/types/database';
 
 /**
+ * Re-exported so a screen that imports `businessTypeOptions` or `ROLE_LABELS` does
+ * not also have to reach into `@/types/database` for the type those values are keyed
+ * by. The declarations stay in the schema-mirroring module — this is an alias, not a
+ * second definition, so the two cannot drift.
+ */
+export type { BusinessType, OrganizationRole };
+
+/**
  * Every role, ascending by authority.
  *
  * The order is load-bearing: `roleRank` is the 1-based index, which is exactly
@@ -304,22 +312,38 @@ type IntlWithSupportedValues = typeof Intl & {
 };
 
 /**
- * Every IANA zone the runtime knows, or the curated fallback.
+ * Every IANA zone this runtime knows, unioned with the curated list.
  *
- * Computed once: on a full ICU build this is several hundred strings and the
- * onboarding screen renders it into a searchable picker.
+ * The union is not belt-and-braces — it fixes a real defect. `supportedValuesOf`
+ * returns the names the runtime's ICU build considers CANONICAL, and builds disagree:
+ * an older CLDR reports `Asia/Calcutta` and `Europe/Kiev`, a newer one reports
+ * `Asia/Kolkata` and `Europe/Kyiv`. On an older build `Asia/Kolkata` — the value
+ * `DEFAULT_TIMEZONE` pre-fills onboarding with — is absent from the list, so it fails
+ * `isKnownTimezone`, never appears in the picker, and an Indian business cannot
+ * submit the onboarding form without first changing a field that was already correct.
+ *
+ * Postgres has no such problem: `pg_timezone_names` carries the backward-compatibility
+ * links alongside the modern names, so both spellings are accepted by the trigger.
+ * Unioning brings the client into line with the database rather than the other way
+ * round. On a build with older canonical names the picker offers both spellings of a
+ * handful of zones; both are real, both save, and that is a far smaller cost than a
+ * default value the form refuses.
  */
 export const availableTimezones: readonly string[] = (() => {
   const supportedValuesOf = (Intl as IntlWithSupportedValues).supportedValuesOf;
-  if (typeof supportedValuesOf !== 'function') return FALLBACK_TIMEZONES;
 
-  try {
-    const zones = supportedValuesOf('timeZone');
-    return zones.length > 0 ? zones : FALLBACK_TIMEZONES;
-  } catch {
-    // A partial ICU build can throw rather than return an empty list.
-    return FALLBACK_TIMEZONES;
-  }
+  const fromRuntime = ((): readonly string[] => {
+    if (typeof supportedValuesOf !== 'function') return [];
+    try {
+      return supportedValuesOf('timeZone');
+    } catch {
+      // A partial ICU build can throw rather than return an empty list.
+      return [];
+    }
+  })();
+
+  // Sorted so the picker reads predictably whichever half a name came from.
+  return [...new Set([...fromRuntime, ...FALLBACK_TIMEZONES])].sort((a, b) => a.localeCompare(b));
 })();
 
 /**
@@ -337,6 +361,13 @@ export function guessTimezone(): string {
   }
 }
 
+/**
+ * Exact, case-sensitive membership — deliberately not a "can the runtime use it"
+ * probe. `new Intl.DateTimeFormat('en', { timeZone: value })` accepts `IST`, `utc`
+ * and `asia/kolkata`, none of which appear in `pg_timezone_names`; the trigger
+ * compares `tz.name = new.timezone`, so a looser client check would hand the user a
+ * database error in place of an inline one.
+ */
 export function isKnownTimezone(value: unknown): value is string {
   return typeof value === 'string' && availableTimezones.includes(value);
 }

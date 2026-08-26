@@ -23,6 +23,7 @@ import type {
   OrganizationMemberRow,
   OrganizationRole,
   OrganizationRow,
+  TablesUpdate,
 } from '@/types/database';
 import { appError } from '@/utils/errors';
 import { logger } from '@/utils/logger';
@@ -179,11 +180,14 @@ export async function updateOrganization(
   organizationId: string,
   patch: OrganizationPatch,
 ): Promise<ActionResult<OrganizationRow>> {
-  const changes: Record<string, string> = {};
-  if (patch.name !== undefined) changes['name'] = patch.name;
-  if (patch.businessType !== undefined) changes['business_type'] = patch.businessType;
-  if (patch.timezone !== undefined) changes['timezone'] = patch.timezone;
-  if (patch.currency !== undefined) changes['currency'] = patch.currency;
+  // Typed as the table's Update shape rather than `Record<string, string>`: PostgREST
+  // rejects unknown columns at runtime, and the generated Update type makes the same
+  // refusal a compile error. `business_type` is also narrower than `string` here.
+  const changes: TablesUpdate<'organizations'> = {};
+  if (patch.name !== undefined) changes.name = patch.name;
+  if (patch.businessType !== undefined) changes.business_type = patch.businessType;
+  if (patch.timezone !== undefined) changes.timezone = patch.timezone;
+  if (patch.currency !== undefined) changes.currency = patch.currency;
 
   if (Object.keys(changes).length === 0) {
     return err(appError('VALIDATION_FAILED', 'No organization fields to update'));
