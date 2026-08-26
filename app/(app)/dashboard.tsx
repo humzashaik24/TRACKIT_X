@@ -59,11 +59,6 @@ const styles = createStyles((theme) => ({
   grow: {
     flex: 1,
   },
-  pendingRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: theme.space[3],
-  },
 }));
 
 /**
@@ -83,17 +78,15 @@ function NotBuiltYet({
 
   return (
     <Card variant="outline" padding={4}>
-      <VStack gap={2} style={s.pendingRow}>
-        <HStack gap={3} align="flex-start">
-          <Icon name={icon} size="md" tone="tertiary" />
-          <VStack gap={1} style={s.grow}>
-            <Text variant="label">{headline}</Text>
-            <Text variant="bodySm" tone="secondary">
-              {detail}
-            </Text>
-          </VStack>
-        </HStack>
-      </VStack>
+      <HStack gap={3} align="flex-start">
+        <Icon name={icon} size="md" tone="tertiary" />
+        <VStack gap={1} style={s.grow}>
+          <Text variant="label">{headline}</Text>
+          <Text variant="bodySm" tone="secondary">
+            {detail}
+          </Text>
+        </VStack>
+      </HStack>
     </Card>
   );
 }

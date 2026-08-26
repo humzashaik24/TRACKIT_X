@@ -87,7 +87,18 @@
       "Bash(grep -nA4 '^\\\\[db.seed\\\\]' supabase/config.toml)",
       "Bash(timeout 420 npx --no-install supabase db reset)",
       "Bash(echo \"psql exit=$?\")",
-      "Bash(cd C:/TRACKIT_X && echo \"=== ALL PASS LINES ===\"; grep -oE 'PASS +.*' /tmp/rls_out.txt | nl; echo; echo \"=== tail \\(final block\\) ===\"; tail -20 /tmp/rls_out.txt)"
+      "Bash(cd C:/TRACKIT_X && echo \"=== ALL PASS LINES ===\"; grep -oE 'PASS +.*' /tmp/rls_out.txt | nl; echo; echo \"=== tail \\(final block\\) ===\"; tail -20 /tmp/rls_out.txt)",
+      "Bash(timeout 90 npx --no-install supabase status -o json)",
+      "Bash(node -e \"let s='';process.stdin.on\\('data',d=>s+=d\\).on\\('end',\\(\\)=>{try{const o=JSON.parse\\(s\\);console.log\\(Object.keys\\(o\\).join\\('\\\\n'\\)\\)}catch\\(e\\){console.log\\('parse failed:',e.message\\)}}\\)\")",
+      "Bash(rm -f /tmp/sbstatus.json)",
+      "Bash(node -e \"const p=require\\('./package.json'\\);console.log\\('scripts:',JSON.stringify\\(p.scripts,null,2\\)\\);console.log\\('supabase-js:',p.dependencies['@supabase/supabase-js']\\);console.log\\('expo:',p.dependencies.expo\\)\")",
+      "Bash(node -e \"const p=require\\('./package.json'\\);console.log\\(JSON.stringify\\(p.jest??'\\(separate config\\)',null,2\\)\\)\")",
+      "Bash(curl -s -o /dev/null -w 'mailpit HTTP %{http_code}\\\\n' http://127.0.0.1:54324/api/v1/messages)",
+      "Bash(timeout 180 npx eslint scripts/design/derive-chart-palette.mjs)",
+      "Bash(echo \"eslint exit=$?\")",
+      "Bash(timeout 180 node scripts/verify-local-connection.mjs)",
+      "Bash(node scripts/verify-local-connection.mjs)",
+      "Bash(node -e \"const p=require\\('./package.json'\\);console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\);console.log\\('--- main:',p.main\\)\")"
     ]
   }
 }
