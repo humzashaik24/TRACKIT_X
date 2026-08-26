@@ -454,6 +454,31 @@ begin
       using errcode = '42501';
   end if;
 
+  -- Authority is not only about the role being handed OUT. It is also about the
+  -- person being acted UPON, and that half was missing: the grant check further
+  -- down looks at `new.role`, which for a demotion is LOWER than the actor's own
+  -- rank and therefore passes. So an admin could demote an owner to member, or
+  -- delete an owner outright, exercising authority they do not hold over somebody
+  -- senior to them. In a business with two owners that is a hostile takeover
+  -- performed entirely within the rules.
+  --
+  -- Ranking the target's CURRENT role closes it. The comparison is strict, so
+  -- peers are unaffected: owner acts on owner, admin acts on admin. Only acting
+  -- UPWARD is refused.
+  --
+  -- Deliberately placed before the last-owner assertion. Both rules would refuse
+  -- an admin deleting a sole owner, and an unauthorised write should be reported
+  -- as unauthorised (42501) rather than as an invariant breach (23514) — the
+  -- caller was never entitled to attempt it, whatever it would have broken.
+  if tg_op in ('UPDATE', 'DELETE') then
+    if public.organization_role_rank(old.role)
+       > public.organization_role_rank(actor_role) then
+      raise exception 'Role % may not administer a member holding role %',
+        actor_role, old.role
+        using errcode = '42501';
+    end if;
+  end if;
+
   -- The last owner may not be demoted or removed: an organization with no owner
   -- cannot be administered or deleted by anyone, ever.
   --
@@ -504,7 +529,7 @@ end;
 $$;
 
 comment on function public.guard_organization_member_write() is
-  'Blocks privilege escalation, orphaned organizations and key mutation on membership writes.';
+  'Blocks privilege escalation, action against senior members, orphaned organizations and key mutation on membership writes.';
 
 create trigger organization_members_guard_write
   before insert or update or delete on public.organization_members

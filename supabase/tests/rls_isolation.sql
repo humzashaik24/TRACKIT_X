@@ -267,6 +267,21 @@ begin
     and user_id = public.rls_test_uid('a_admin');
   get diagnostics affected = row_count;
   perform public.rls_test_assert(affected = 0, '3.3 a member cannot remove a colleague');
+
+  -- Least of all somebody senior to them. Refused by the policy before the write
+  -- guard is ever consulted, which is why this is a silent no-op rather than an
+  -- error: a member's UPDATE/DELETE simply matches no row.
+  delete from public.organization_members
+  where organization_id = public.rls_test_org('a')
+    and user_id = public.rls_test_uid('a_owner');
+  get diagnostics affected = row_count;
+  perform public.rls_test_assert(affected = 0, '3.4 a member cannot remove the owner');
+
+  update public.organization_members set role = 'member'
+  where organization_id = public.rls_test_org('a')
+    and user_id = public.rls_test_uid('a_owner');
+  get diagnostics affected = row_count;
+  perform public.rls_test_assert(affected = 0, '3.5 a member cannot demote the owner');
 end;
 $$;
 
@@ -498,6 +513,124 @@ begin
     when check_violation then
       perform public.rls_test_assert(true, '7.5 a malformed permission slug is rejected');
   end;
+end;
+$$;
+
+reset role;
+
+-- ===========================================================================
+-- 8. Rank protection. Nobody administers a member senior to themselves.
+--
+--    The rule the other sections do not reach: sections 3 and 5 cover a member
+--    acting at all and an admin handing OUT authority above their own, but not
+--    an admin acting UPON somebody who already holds it. A demotion passes the
+--    grant check by construction — the role being written is lower than the
+--    actor's own — so before the write guard ranked the target's existing role,
+--    an admin could demote or delete an OWNER.
+--
+--    8.1–8.3 assert SQLSTATE 42501 specifically, and that is the point. Organization
+--    A has exactly one owner, so the last-owner invariant would also have refused
+--    8.2 — with 23514, which these handlers do not catch. A regression therefore
+--    surfaces as an uncaught exception that aborts the script, rather than as a
+--    test passing for the wrong reason.
+--
+--    State on entry, after section 5: a_owner is owner, a_admin is admin, and
+--    a_member was promoted to admin by 5.4.
+-- ===========================================================================
+
+set local role authenticated;
+set local "request.jwt.claims" =
+  '{"sub":"11111111-1111-4111-a111-111111111102","role":"authenticated"}';
+
+do $$
+declare
+  affected integer;
+begin
+  begin
+    update public.organization_members set role = 'member'
+    where organization_id = public.rls_test_org('a')
+      and user_id = public.rls_test_uid('a_owner');
+    perform public.rls_test_assert(false, '8.1 an admin cannot demote an owner');
+  exception
+    when insufficient_privilege then
+      perform public.rls_test_assert(true, '8.1 an admin cannot demote an owner');
+  end;
+
+  begin
+    delete from public.organization_members
+    where organization_id = public.rls_test_org('a')
+      and user_id = public.rls_test_uid('a_owner');
+    perform public.rls_test_assert(false, '8.2 an admin cannot delete an owner');
+  exception
+    when insufficient_privilege then
+      perform public.rls_test_assert(true, '8.2 an admin cannot delete an owner');
+  end;
+
+  -- The rule covers any modification of a senior member's row, not only a role
+  -- change: rewriting an owner's permission list is also acting above your rank.
+  begin
+    update public.organization_members set permissions = array['payroll.view']
+    where organization_id = public.rls_test_org('a')
+      and user_id = public.rls_test_uid('a_owner');
+    perform public.rls_test_assert(false, '8.3 an admin cannot rewrite an owner''s permissions');
+  exception
+    when insufficient_privilege then
+      perform public.rls_test_assert(true, '8.3 an admin cannot rewrite an owner''s permissions');
+  end;
+
+  -- The boundary on the allowed side. The comparison is strict, so equal ranks
+  -- are peers: a_member holds admin after 5.4, and one admin may still act on
+  -- another. Over-tightening this to `>=` would make admins unable to administer
+  -- each other, which is a different bug in the same line.
+  update public.organization_members set role = 'member'
+  where organization_id = public.rls_test_org('a')
+    and user_id = public.rls_test_uid('a_member');
+  get diagnostics affected = row_count;
+  perform public.rls_test_assert(affected = 1, '8.4 an admin can still demote a peer admin');
+end;
+$$;
+
+reset role;
+
+-- An owner is above both of them and keeps working normally.
+set local role authenticated;
+set local "request.jwt.claims" =
+  '{"sub":"11111111-1111-4111-a111-111111111101","role":"authenticated"}';
+
+do $$
+declare
+  affected integer;
+  owners integer;
+begin
+  update public.organization_members set role = 'manager'
+  where organization_id = public.rls_test_org('a')
+    and user_id = public.rls_test_uid('a_admin');
+  get diagnostics affected = row_count;
+  perform public.rls_test_assert(affected = 1, '8.5 an owner can demote an admin');
+
+  delete from public.organization_members
+  where organization_id = public.rls_test_org('a')
+    and user_id = public.rls_test_uid('a_member');
+  get diagnostics affected = row_count;
+  perform public.rls_test_assert(affected = 1, '8.6 an owner can remove a lower-ranked member');
+
+  -- And the invariant the new check sits in front of is still standing: the sole
+  -- remaining owner cannot remove themselves, even though rank alone permits it.
+  begin
+    delete from public.organization_members
+    where organization_id = public.rls_test_org('a')
+      and user_id = public.rls_test_uid('a_owner');
+    perform public.rls_test_assert(false, '8.7 the last owner of A still cannot be deleted');
+  exception
+    when check_violation then
+      perform public.rls_test_assert(true, '8.7 the last owner of A still cannot be deleted');
+  end;
+
+  select count(*) into owners
+  from public.organization_members member
+  where member.organization_id = public.rls_test_org('a')
+    and member.role = 'owner';
+  perform public.rls_test_assert(owners = 1, '8.8 organization A still has its owner');
 end;
 $$;
 
