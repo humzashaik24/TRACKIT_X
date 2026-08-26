@@ -78,7 +78,16 @@
       "Bash(timeout 60 docker images -q)",
       "Bash(timeout 45 docker ps -a --filter 'name=supabase' --format '{{.Names}} {{.Status}}')",
       "Bash(timeout 45 docker volume ls --filter 'name=supabase' --format '{{.Name}}')",
-      "Bash(cd C:/TRACKIT_X && echo '=== git status \\(must be empty\\) ==='; git status --short; echo \"[end of status]\"; echo; echo '=== HEAD ==='; git log --oneline -3; echo; echo '=== CLI-written gitignored caches \\(disclosure\\) ==='; ls -la supabase/.temp/ | tail -2; ls -la \"$HOME/.supabase/telemetry.json\")"
+      "Bash(cd C:/TRACKIT_X && echo '=== git status \\(must be empty\\) ==='; git status --short; echo \"[end of status]\"; echo; echo '=== HEAD ==='; git log --oneline -3; echo; echo '=== CLI-written gitignored caches \\(disclosure\\) ==='; ls -la supabase/.temp/ | tail -2; ls -la \"$HOME/.supabase/telemetry.json\")",
+      "Bash(npx --no-install supabase start)",
+      "Bash(command -v psql)",
+      "Bash(timeout 90 npx --no-install supabase status)",
+      "Bash(python -c ' *)",
+      "Bash(docker exec *)",
+      "Bash(grep -nA4 '^\\\\[db.seed\\\\]' supabase/config.toml)",
+      "Bash(timeout 420 npx --no-install supabase db reset)",
+      "Bash(echo \"psql exit=$?\")",
+      "Bash(cd C:/TRACKIT_X && echo \"=== ALL PASS LINES ===\"; grep -oE 'PASS +.*' /tmp/rls_out.txt | nl; echo; echo \"=== tail \\(final block\\) ===\"; tail -20 /tmp/rls_out.txt)"
     ]
   }
 }
