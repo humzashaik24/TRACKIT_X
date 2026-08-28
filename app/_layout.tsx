@@ -19,8 +19,21 @@
  * No splash-screen API is called. Expo hides the native splash once the first
  * frame renders, and that first frame is `BrandSplash` — so the handoff is a
  * cross-fade between two dark screens rather than a gap to be managed in JS.
+ *
+ * This is also where the brand typeface is registered. `expo-font` is the loader
+ * for both native and web here — there is no stylesheet link to a font CDN
+ * anywhere in the project — and it is called at the root because a face has to be
+ * registered before any text that asks for it renders.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  Sora_300Light,
+  Sora_400Regular,
+  Sora_500Medium,
+  Sora_600SemiBold,
+  Sora_700Bold,
+} from '@expo-google-fonts/sora';
+import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -29,11 +42,27 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AuthProvider } from '@/contexts/AuthContext';
 import { OrganizationProvider } from '@/contexts/OrganizationContext';
-import { ThemeProvider, ToastProvider, useTheme } from '@/design-system';
+import { brandFont, ThemeProvider, ToastProvider, useTheme } from '@/design-system';
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
 });
+
+/**
+ * Sora, keyed by the family names the typography tokens ask for.
+ *
+ * The keys are not decorative: `expo-font` registers each face under the key it
+ * was given, so these must stay identical to `brandFont` or every display style
+ * silently falls back to the platform sans. Deriving them from the token removes
+ * the possibility of that drift.
+ */
+const brandFontSources = {
+  [brandFont.light]: Sora_300Light,
+  [brandFont.regular]: Sora_400Regular,
+  [brandFont.medium]: Sora_500Medium,
+  [brandFont.semibold]: Sora_600SemiBold,
+  [brandFont.bold]: Sora_700Bold,
+};
 
 /**
  * Split out because the navigator needs theme tokens, which only exist below
@@ -62,6 +91,15 @@ function ThemedNavigator() {
 }
 
 export default function RootLayout() {
+  // Nothing gates on the return value. A webfont is a progressive enhancement:
+  // holding the entire application behind one would turn a cosmetic failure into a
+  // blank screen, and the typography tokens already name the platform sans as the
+  // fallback. The call is here for its re-render — when the faces arrive this
+  // component updates, which is what makes already-mounted native text re-measure
+  // in the real family instead of staying in the fallback until it happens to
+  // re-render for another reason.
+  useFonts(brandFontSources);
+
   return (
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>

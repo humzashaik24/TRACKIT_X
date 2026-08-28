@@ -48,7 +48,7 @@ function toStyle(spec: ShadowSpec, shadowColor: string, rgb: string): ViewStyle 
 export type ElevationToken = 'none' | 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
 export interface ThemeShadows extends Record<ElevationToken, ViewStyle> {
-  /** Indigo glow — primary call to action, focus emphasis. */
+  /** Signal-green glow — primary call to action, focus emphasis. */
   readonly glowAccent: ViewStyle;
   /** Violet glow — AI surfaces. */
   readonly glowAi: ViewStyle;
@@ -81,8 +81,11 @@ function build(shadowColor: string, rgb: string, opacityScale: number): ThemeSha
     xl: toStyle(scaled(specs.xl), shadowColor, rgb),
     glowAccent: toStyle(
       { y: 0, blur: 28, spread: -4, opacity: 0.45, elevation: 8 },
-      '#5B6FF0',
-      '91, 111, 240',
+      // `palette.green[500]` rather than either theme's `accent.fg`: one glow is
+      // built for both modes here, and the 500 step is the midpoint between the
+      // dark theme's bright 400 and the light theme's darker 600/700.
+      '#0FD265',
+      '15, 210, 101',
     ),
     glowAi: toStyle(
       { y: 0, blur: 28, spread: -4, opacity: 0.45, elevation: 8 },

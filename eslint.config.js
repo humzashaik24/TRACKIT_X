@@ -86,12 +86,14 @@ module.exports = defineConfig([
     // rule is switched off only for the animation primitives, so ordinary props
     // and state stay covered everywhere else.
     files: [
+      'src/design-system/hooks/useEntrance.ts',
       'src/design-system/hooks/usePressAnimation.ts',
       'src/design-system/components/BottomSheet.tsx',
       'src/design-system/components/Modal.tsx',
       'src/design-system/components/ProgressBar.tsx',
       'src/design-system/components/Skeleton.tsx',
       'src/design-system/components/Toast.tsx',
+      'src/components/marketing/AIOrbit.tsx',
     ],
     rules: {
       'react-hooks/immutability': 'off',

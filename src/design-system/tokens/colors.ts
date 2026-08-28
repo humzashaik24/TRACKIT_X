@@ -57,7 +57,30 @@ export const palette = {
     975: '#06070A',
     1000: '#000000',
   },
-  /** Brand indigo — primary interactive colour. */
+  /**
+   * Signal green — the brand's primary interactive colour.
+   *
+   * Deliberately a step yellower and far more saturated than `emerald`, which
+   * carries "success". The two are adjacent on the wheel, so anything that means
+   * *state* (success, warning, danger) always ships with an icon and a word as
+   * well; colour alone never distinguishes "this is the action" from "this went
+   * well". Used for CTAs, active navigation, focus, AI indicators and the one
+   * metric a screen is about — not as a background wash.
+   */
+  green: {
+    50: '#E9FFF1',
+    100: '#C6FFDE',
+    200: '#93FCC0',
+    300: '#5AF79E',
+    400: '#26EE7E',
+    500: '#0FD265',
+    600: '#08AE52',
+    700: '#0A8341',
+    800: '#0B6134',
+    900: '#0A4526',
+    950: '#052716',
+  },
+  /** Indigo — retained for charts and for the light theme's cool support. */
   indigo: {
     50: '#EEF1FE',
     100: '#DEE4FD',
@@ -243,7 +266,7 @@ export const darkColors: ThemeColors = {
   border: 'rgba(255, 255, 255, 0.09)',
   borderSubtle: 'rgba(255, 255, 255, 0.05)',
   borderStrong: 'rgba(255, 255, 255, 0.17)',
-  borderFocus: palette.indigo[400],
+  borderFocus: palette.green[400],
   sheen: 'rgba(255, 255, 255, 0.10)',
 
   text: '#F2F5F9',
@@ -253,11 +276,14 @@ export const darkColors: ThemeColors = {
   textInverse: palette.neutral[975],
 
   accent: {
-    fg: palette.indigo[400],
-    surface: palette.indigo[600],
-    onSurface: palette.neutral[0],
-    subtle: withAlpha(palette.indigo[500], 0.14),
-    border: withAlpha(palette.indigo[400], 0.3),
+    // A filled accent surface is a *bright* green carrying near-black text, not a
+    // dark green carrying white. That inversion is what makes one control per
+    // screen read as the action without tinting the whole interface.
+    fg: palette.green[400],
+    surface: palette.green[400],
+    onSurface: palette.neutral[975],
+    subtle: withAlpha(palette.green[400], 0.13),
+    border: withAlpha(palette.green[400], 0.32),
   },
   ai: {
     fg: palette.violet[400],
@@ -326,7 +352,7 @@ export const lightColors: ThemeColors = {
   border: 'rgba(13, 16, 21, 0.10)',
   borderSubtle: 'rgba(13, 16, 21, 0.06)',
   borderStrong: 'rgba(13, 16, 21, 0.18)',
-  borderFocus: palette.indigo[600],
+  borderFocus: palette.green[600],
   sheen: 'rgba(255, 255, 255, 0.7)',
 
   text: '#0D1015',
@@ -336,11 +362,14 @@ export const lightColors: ThemeColors = {
   textInverse: palette.neutral[0],
 
   accent: {
-    fg: palette.indigo[700],
-    surface: palette.indigo[600],
-    onSurface: palette.neutral[0],
-    subtle: withAlpha(palette.indigo[500], 0.1),
-    border: withAlpha(palette.indigo[600], 0.26),
+    // `fg` steps two stops darker than the dark theme's: the vivid 400 is
+    // unreadable as text on white, and a brand colour that fails contrast is not
+    // a brand colour. The filled surface keeps the dark-on-green inversion.
+    fg: palette.green[700],
+    surface: palette.green[600],
+    onSurface: palette.green[950],
+    subtle: withAlpha(palette.green[500], 0.12),
+    border: withAlpha(palette.green[600], 0.28),
   },
   ai: {
     fg: palette.violet[700],
@@ -395,7 +424,7 @@ export const lightColors: ThemeColors = {
 // ---------------------------------------------------------------------------
 
 export interface ThemeGradients {
-  /** Brand wash — indigo into violet. */
+  /** Brand wash — signal green into cyan. */
   readonly brand: readonly [string, string];
   /** AI wash — violet into cyan. Signals machine reasoning. */
   readonly ai: readonly [string, string];
@@ -408,17 +437,17 @@ export interface ThemeGradients {
 }
 
 export const darkGradients: ThemeGradients = {
-  brand: [palette.indigo[500], palette.violet[500]],
+  brand: [palette.green[400], palette.cyan[400]],
   ai: [palette.violet[500], palette.cyan[400]],
   sheen: ['rgba(255, 255, 255, 0.08)', 'rgba(255, 255, 255, 0)'],
-  glow: [withAlpha(palette.indigo[500], 0.28), withAlpha(palette.indigo[500], 0)],
+  glow: [withAlpha(palette.green[400], 0.26), withAlpha(palette.green[400], 0)],
   health: [palette.red[400], palette.amber[400], palette.emerald[400]],
 };
 
 export const lightGradients: ThemeGradients = {
-  brand: [palette.indigo[600], palette.violet[600]],
+  brand: [palette.green[600], palette.cyan[600]],
   ai: [palette.violet[600], palette.cyan[600]],
   sheen: ['rgba(255, 255, 255, 0.9)', 'rgba(255, 255, 255, 0)'],
-  glow: [withAlpha(palette.indigo[500], 0.16), withAlpha(palette.indigo[500], 0)],
+  glow: [withAlpha(palette.green[500], 0.16), withAlpha(palette.green[500], 0)],
   health: [palette.red[600], palette.amber[500], palette.emerald[600]],
 };

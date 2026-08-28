@@ -98,7 +98,9 @@
       "Bash(echo \"eslint exit=$?\")",
       "Bash(timeout 180 node scripts/verify-local-connection.mjs)",
       "Bash(node scripts/verify-local-connection.mjs)",
-      "Bash(node -e \"const p=require\\('./package.json'\\);console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\);console.log\\('--- main:',p.main\\)\")"
+      "Bash(node -e \"const p=require\\('./package.json'\\);console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\);console.log\\('--- main:',p.main\\)\")",
+      "Bash(node -e \"const p=require\\('./package.json'\\);console.log\\('DEPS'\\);console.log\\(JSON.stringify\\(p.dependencies,null,1\\)\\);console.log\\('DEV'\\);console.log\\(JSON.stringify\\(p.devDependencies,null,1\\)\\)\")",
+      "Bash(node -e \"const p=require\\('./package.json'\\);console.log\\('sora:',p.dependencies['@expo-google-fonts/sora']\\)\")"
     ]
   }
 }

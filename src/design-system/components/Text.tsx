@@ -30,7 +30,13 @@ export interface TextProps extends RNTextProps {
   variant?: TypographyVariant;
   tone?: TextTone;
   align?: TextStyle['textAlign'];
-  /** Overrides the variant's weight. Use sparingly. */
+  /**
+   * Overrides the variant's weight. Use sparingly — and not on a display,
+   * heading or lead variant: those carry Sora, whose weight lives in the family
+   * name, so a second `fontWeight` instruction makes the browser synthesise a
+   * fake bold on top of the real face. Pick the variant that already has the
+   * weight you want instead.
+   */
   weight?: keyof typeof fontWeight;
   /**
    * Explicit colour. Reserved for cases where the colour carries data meaning

@@ -1,6 +1,9 @@
 /**
  * Trackit X — design-system hook barrel.
  */
+export { useEntrance } from './useEntrance';
+export type { EntranceOptions } from './useEntrance';
+
 export { usePressAnimation } from './usePressAnimation';
 export type { PressAnimation, PressAnimationOptions } from './usePressAnimation';
 

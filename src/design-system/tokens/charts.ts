@@ -41,7 +41,14 @@
  *    label carries identity; the label itself stays in ink.
  */
 
-/** Fixed categorical order. Slot 1 is the brand indigo. */
+/**
+ * Fixed categorical order. Slot 1 is indigo — the default single series.
+ *
+ * Note that this is deliberately NOT the brand accent (signal green). The
+ * categorical ramp was validated as a set for colour-vision separation, and
+ * repainting slot 1 to match a brand refresh would invalidate every adjacent-pair
+ * measurement above. Chart identity and brand identity are separate jobs.
+ */
 export const CHART_SERIES_SLOTS = 8;
 
 /**
