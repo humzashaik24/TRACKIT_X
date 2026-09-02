@@ -101,7 +101,10 @@
       "Bash(node -e \"const p=require\\('./package.json'\\);console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\);console.log\\('--- main:',p.main\\)\")",
       "Bash(node -e \"const p=require\\('./package.json'\\);console.log\\('DEPS'\\);console.log\\(JSON.stringify\\(p.dependencies,null,1\\)\\);console.log\\('DEV'\\);console.log\\(JSON.stringify\\(p.devDependencies,null,1\\)\\)\")",
       "Bash(node -e \"const p=require\\('./package.json'\\);console.log\\('sora:',p.dependencies['@expo-google-fonts/sora']\\)\")",
-      "Bash(grep -oh \"NOTICE: Trackit X seed [^\\\\\\\\\\\\\\\\\\\\\"]*\" \"C:/Users/humza/.claude/projects/C--TRACKIT-X/60c275d0-d123-4d0d-8e64-693d71de1e2f.jsonl\")"
+      "Bash(grep -oh \"NOTICE: Trackit X seed [^\\\\\\\\\\\\\\\\\\\\\"]*\" \"C:/Users/humza/.claude/projects/C--TRACKIT-X/60c275d0-d123-4d0d-8e64-693d71de1e2f.jsonl\")",
+      "Bash(python -)",
+      "Bash(git rm *)",
+      "Bash(timeout 60 npx supabase status)"
     ]
   }
 }
