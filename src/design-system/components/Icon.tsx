@@ -53,6 +53,7 @@ export const icons = {
   finance: feather('credit-card'),
   inventory: feather('package'),
   warehouse: material('warehouse'),
+  procurement: feather('shopping-bag'),
   suppliers: feather('truck'),
   customers: feather('user-check'),
   reports: feather('bar-chart-2'),

@@ -21,6 +21,7 @@
 import { useCallback } from 'react';
 
 import { BOTTOM_BAR_CLEARANCE } from '@/components/navigation/AppShell';
+import { PageHeader } from '@/components/navigation/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOrganization } from '@/contexts/OrganizationContext';
 import {
@@ -42,6 +43,7 @@ import {
 import { BUSINESS_TYPE_LABELS, isBusinessType, ROLE_LABELS } from '@/domain/organization';
 import { DashboardSection } from '@/features/dashboard/DashboardSection';
 import { useWorkforceSnapshot } from '@/features/dashboard/useWorkforceSnapshot';
+import { deriveBreadcrumbs } from '@/navigation/breadcrumbs';
 import { countLabel, formatNumber } from '@/utils/format';
 
 const styles = createStyles((theme) => ({
@@ -108,7 +110,7 @@ export default function DashboardScreen() {
 
   return (
     <ScreenContainer
-      edges={['top', 'bottom']}
+      edges={['bottom']}
       gap={sectionGap}
       maxWidth="none"
       refreshing={workforce.isRefreshing}
@@ -120,23 +122,24 @@ export default function DashboardScreen() {
       loadingLabel="Loading your dashboard"
     >
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <VStack gap={2}>
-        <Text variant="bodySm" tone="tertiary">
-          {displayName}
-        </Text>
-        <Text variant="h2">{organization?.name ?? 'Your business'}</Text>
-        <HStack gap={2} align="center" wrap>
-          {role === null ? null : (
-            <Badge label={ROLE_LABELS[role]} intent="accent" variant="soft" size="sm" />
-          )}
-          {businessTypeLabel === null ? null : (
-            <Badge label={businessTypeLabel} intent="neutral" variant="outline" size="sm" />
-          )}
-          {organization === null ? null : (
-            <Badge label={organization.currency} intent="neutral" variant="outline" size="sm" />
-          )}
-        </HStack>
-      </VStack>
+      <PageHeader
+        title={organization?.name ?? 'Your business'}
+        description={`Welcome back, ${displayName}.`}
+        breadcrumbs={deriveBreadcrumbs('/dashboard')}
+        status={
+          <HStack gap={2} align="center" wrap>
+            {role === null ? null : (
+              <Badge label={ROLE_LABELS[role]} intent="accent" variant="soft" size="sm" />
+            )}
+            {businessTypeLabel === null ? null : (
+              <Badge label={businessTypeLabel} intent="neutral" variant="outline" size="sm" />
+            )}
+            {organization === null ? null : (
+              <Badge label={organization.currency} intent="neutral" variant="outline" size="sm" />
+            )}
+          </HStack>
+        }
+      />
 
       {/* ── 1. Business health ─────────────────────────────────────────────── */}
       <DashboardSection

@@ -26,7 +26,7 @@ export interface ComingNextProps {
 export function ComingNext({ destination }: ComingNextProps) {
   return (
     <ScreenContainer
-      edges={['top', 'bottom']}
+      edges={['bottom']}
       contentStyle={{ paddingBottom: BOTTOM_BAR_CLEARANCE }}
     >
       <VStack gap={4} justify="center" flex={1}>

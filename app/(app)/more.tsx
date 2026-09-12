@@ -24,6 +24,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { View } from 'react-native';
 
 import { BOTTOM_BAR_CLEARANCE } from '@/components/navigation/AppShell';
+import { PageHeader } from '@/components/navigation/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOrganization } from '@/contexts/OrganizationContext';
 import {
@@ -50,6 +51,7 @@ import {
   ROLE_DESCRIPTIONS,
   ROLE_LABELS,
 } from '@/domain/organization';
+import { deriveBreadcrumbs } from '@/navigation/breadcrumbs';
 
 const styles = createStyles((theme) => ({
   row: {
@@ -151,17 +153,12 @@ export default function MoreScreen() {
   }, [signOut, toast]);
 
   return (
-    <ScreenContainer
-      edges={['top', 'bottom']}
-      gap={20}
-      contentStyle={{ paddingBottom: BOTTOM_BAR_CLEARANCE }}
-    >
-      <VStack gap={1}>
-        <Text variant="h2">More</Text>
-        <Text variant="bodySm" tone="secondary">
-          Your workspace, how the app looks, and your account.
-        </Text>
-      </VStack>
+    <ScreenContainer edges={['bottom']} gap={20} contentStyle={{ paddingBottom: BOTTOM_BAR_CLEARANCE }}>
+      <PageHeader
+        title="More"
+        description="Your workspace, how the app looks, and your account."
+        breadcrumbs={deriveBreadcrumbs('/more')}
+      />
 
       {/* ── Organization ───────────────────────────────────────────────────── */}
       <VStack gap={3}>

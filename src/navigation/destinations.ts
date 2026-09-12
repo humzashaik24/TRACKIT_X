@@ -24,11 +24,61 @@ import type { IconName } from '@/design-system';
  */
 export type DestinationPath =
   | '/dashboard'
+  | '/organizations'
+  | '/employees'
+  | '/workforce'
   | '/projects'
   | '/tasks'
-  | '/employees'
+  | '/attendance'
+  | '/leave'
+  | '/payroll'
+  | '/inventory'
+  | '/procurement'
+  | '/resources'
+  | '/customers'
+  | '/vendors'
+  | '/finance'
+  | '/reports'
+  | '/business-health'
   | '/ai'
+  | '/ai-recommendations'
+  | '/ai-agents'
+  | '/knowledge-base'
+  | '/notifications'
+  | '/settings'
   | '/more';
+
+/**
+ * The information-architecture groups the sidebar is organised by. Display order
+ * is `SECTION_ORDER`, not declaration order — see below.
+ */
+export type DestinationSection =
+  | 'main'
+  | 'work'
+  | 'operations'
+  | 'business'
+  | 'intelligence'
+  | 'system';
+
+/** Section group header labels, as shown in the sidebar. */
+export const SECTION_LABELS: Record<DestinationSection, string> = {
+  main: 'Main',
+  work: 'Work',
+  operations: 'Operations',
+  business: 'Business',
+  intelligence: 'Intelligence',
+  system: 'System',
+};
+
+/** Sidebar display order, top to bottom. */
+export const SECTION_ORDER: readonly DestinationSection[] = [
+  'main',
+  'work',
+  'operations',
+  'business',
+  'intelligence',
+  'system',
+];
 
 /** Everything about a destination except where it lives. */
 export interface DestinationMeta {
@@ -43,6 +93,13 @@ export interface DestinationMeta {
   readonly summary: string;
   /** Which phase builds it, so the placeholder can say when. */
   readonly arrivesIn: string;
+  /** Which sidebar group this destination belongs to. */
+  readonly section: DestinationSection;
+  /**
+   * True when the destination also appears in the compact bottom tab bar.
+   * The bar can hold only a handful — the full IA lives in the drawer there.
+   */
+  readonly bottomBar: boolean;
 }
 
 export interface Destination extends DestinationMeta {
@@ -58,6 +115,7 @@ export interface Destination extends DestinationMeta {
  * otherwise each carry a branch for a case that cannot happen.
  */
 const META: Record<DestinationPath, DestinationMeta> = {
+  // ── Main ──────────────────────────────────────────────────────────────────
   '/dashboard': {
     label: 'Home',
     longLabel: 'Dashboard',
@@ -65,6 +123,42 @@ const META: Record<DestinationPath, DestinationMeta> = {
     ready: true,
     summary: 'Business health, today’s focus and live signals across the business.',
     arrivesIn: 'Available now',
+    section: 'main',
+    bottomBar: true,
+  },
+
+  // ── Work ──────────────────────────────────────────────────────────────────
+  '/organizations': {
+    label: 'Orgs',
+    longLabel: 'Organizations',
+    icon: 'organization',
+    ready: false,
+    summary:
+      'The companies, partnerships and sites this account works with, and who is inside each.',
+    arrivesIn: 'A later phase',
+    section: 'work',
+    bottomBar: false,
+  },
+  '/employees': {
+    label: 'People',
+    longLabel: 'Employees',
+    icon: 'employees',
+    ready: false,
+    summary: 'Your workforce: roles, skills, wage basis, attendance and documents.',
+    arrivesIn: 'Phase 2',
+    section: 'work',
+    bottomBar: true,
+  },
+  '/workforce': {
+    label: 'Workforce',
+    longLabel: 'Workforce',
+    icon: 'team',
+    ready: false,
+    summary:
+      'Who is available right now: shifts, hours, cost and coverage across the business.',
+    arrivesIn: 'A later phase',
+    section: 'work',
+    bottomBar: false,
   },
   '/projects': {
     label: 'Projects',
@@ -74,6 +168,8 @@ const META: Record<DestinationPath, DestinationMeta> = {
     summary:
       'Jobs, sites and orders with budgets, milestones and the people assigned to each.',
     arrivesIn: 'Phase 2',
+    section: 'work',
+    bottomBar: true,
   },
   '/tasks': {
     label: 'Tasks',
@@ -82,23 +178,187 @@ const META: Record<DestinationPath, DestinationMeta> = {
     ready: false,
     summary: 'Work assigned to a person or a team, with due dates and dependencies.',
     arrivesIn: 'Phase 2',
+    section: 'work',
+    bottomBar: true,
   },
-  '/employees': {
-    label: 'People',
-    longLabel: 'Employees',
-    icon: 'employees',
+  // ── Operations ────────────────────────────────────────────────────────────
+  '/attendance': {
+    label: 'Attendance',
+    longLabel: 'Attendance',
+    icon: 'attendance',
     ready: false,
-    summary: 'Your workforce: roles, skills, wage basis, attendance and documents.',
-    arrivesIn: 'Phase 2',
+    summary: 'Who was in, who was late, and what was scheduled.',
+    arrivesIn: 'A later phase',
+    section: 'operations',
+    bottomBar: false,
   },
+  '/leave': {
+    label: 'Leave',
+    longLabel: 'Leave',
+    icon: 'calendar',
+    ready: false,
+    summary: 'Planned time off, approvals and cover for every role.',
+    arrivesIn: 'A later phase',
+    section: 'operations',
+    bottomBar: false,
+  },
+  '/payroll': {
+    label: 'Payroll',
+    longLabel: 'Payroll',
+    icon: 'payroll',
+    ready: false,
+    summary: 'Wages computed from real attendance and leave, ready to pay out.',
+    arrivesIn: 'A later phase',
+    section: 'operations',
+    bottomBar: false,
+  },
+  '/inventory': {
+    label: 'Inventory',
+    longLabel: 'Inventory',
+    icon: 'inventory',
+    ready: false,
+    summary: 'Stock on hand, reorder levels, batches and committed quantities.',
+    arrivesIn: 'A later phase',
+    section: 'operations',
+    bottomBar: false,
+  },
+  '/procurement': {
+    label: 'Procurement',
+    longLabel: 'Procurement',
+    icon: 'procurement',
+    ready: false,
+    summary: 'Purchase orders, supplier commitments and receipts against them.',
+    arrivesIn: 'A later phase',
+    section: 'operations',
+    bottomBar: false,
+  },
+  '/resources': {
+    label: 'Resources',
+    longLabel: 'Resources',
+    icon: 'assets',
+    ready: false,
+    summary: 'Equipment, vehicles and tools — what is usable and what needs work.',
+    arrivesIn: 'A later phase',
+    section: 'operations',
+    bottomBar: false,
+  },
+
+  // ── Business ──────────────────────────────────────────────────────────────
+  '/customers': {
+    label: 'Customers',
+    longLabel: 'Customers',
+    icon: 'customers',
+    ready: false,
+    summary: 'The organizations and people this business serves, and their history.',
+    arrivesIn: 'A later phase',
+    section: 'business',
+    bottomBar: false,
+  },
+  '/vendors': {
+    label: 'Vendors',
+    longLabel: 'Vendors',
+    icon: 'suppliers',
+    ready: false,
+    summary: 'Suppliers, terms and how reliably they deliver.',
+    arrivesIn: 'A later phase',
+    section: 'business',
+    bottomBar: false,
+  },
+  '/finance': {
+    label: 'Finance',
+    longLabel: 'Finance',
+    icon: 'finance',
+    ready: false,
+    summary: 'Money in, money out, and what it means for the business.',
+    arrivesIn: 'A later phase',
+    section: 'business',
+    bottomBar: false,
+  },
+  '/reports': {
+    label: 'Reports',
+    longLabel: 'Reports',
+    icon: 'reports',
+    ready: false,
+    summary: 'The numbers the business runs on, drawn from its own records.',
+    arrivesIn: 'A later phase',
+    section: 'business',
+    bottomBar: false,
+  },
+  '/business-health': {
+    label: 'Health',
+    longLabel: 'Business Health',
+    icon: 'health',
+    ready: false,
+    summary: 'A single view of whether the business is doing well — from real data.',
+    arrivesIn: 'A later phase',
+    section: 'business',
+    bottomBar: false,
+  },
+
+  // ── Intelligence ──────────────────────────────────────────────────────────
   '/ai': {
     label: 'AI',
-    longLabel: 'AI assistant',
-    icon: 'ai',
+    longLabel: 'AI Copilot',
+    icon: 'aiCopilot',
     ready: false,
     summary:
       'Ask questions about your own data and get answers grounded in it — never invented.',
     arrivesIn: 'A later phase',
+    section: 'intelligence',
+    bottomBar: true,
+  },
+  '/ai-recommendations': {
+    label: 'Recommendations',
+    longLabel: 'AI Recommendations',
+    icon: 'aiInsight',
+    ready: false,
+    summary: 'Suggested next actions derived from this business’s own records.',
+    arrivesIn: 'A later phase',
+    section: 'intelligence',
+    bottomBar: false,
+  },
+  '/ai-agents': {
+    label: 'Agents',
+    longLabel: 'AI Agents',
+    icon: 'aiAgent',
+    ready: false,
+    summary: 'Automated workers that carry out approved, bounded tasks.',
+    arrivesIn: 'A later phase',
+    section: 'intelligence',
+    bottomBar: false,
+  },
+  '/knowledge-base': {
+    label: 'Knowledge',
+    longLabel: 'Knowledge Base',
+    icon: 'knowledge',
+    ready: false,
+    summary: 'The business’s own documents and know-how, searchable in one place.',
+    arrivesIn: 'A later phase',
+    section: 'intelligence',
+    bottomBar: false,
+  },
+
+  // ── System ────────────────────────────────────────────────────────────────
+  '/notifications': {
+    label: 'Notifications',
+    longLabel: 'Notifications',
+    icon: 'notifications',
+    ready: false,
+    summary: 'Alerts about your business as they happen — where they are acted on.',
+    arrivesIn: 'A later phase',
+    section: 'system',
+    bottomBar: false,
+  },
+  '/settings': {
+    label: 'Settings',
+    longLabel: 'Settings',
+    icon: 'settings',
+    ready: false,
+    summary:
+      'Consolidated application settings. Organization details, appearance and account live under More for now.',
+    arrivesIn: 'A later phase',
+    section: 'system',
+    bottomBar: false,
   },
   '/more': {
     label: 'More',
@@ -107,16 +367,62 @@ const META: Record<DestinationPath, DestinationMeta> = {
     ready: true,
     summary: 'Organization details, appearance and account.',
     arrivesIn: 'Available now',
+    section: 'system',
+    bottomBar: true,
   },
 };
 
 /**
- * Display order, left to right in the bottom bar and top to bottom in the sidebar.
+ * Display order, top to bottom in the sidebar. Grouped by section; the section
+ * header labels come from `SECTION_LABELS` in `SECTION_ORDER`.
  *
  * Separate from `META` because a `Record` has no guaranteed iteration order worth
  * relying on for a user-visible layout.
  */
 const ORDER: readonly DestinationPath[] = [
+  // Main
+  '/dashboard',
+  // Work
+  '/organizations',
+  '/employees',
+  '/workforce',
+  '/projects',
+  '/tasks',
+  // Operations
+  '/attendance',
+  '/leave',
+  '/payroll',
+  '/inventory',
+  '/procurement',
+  '/resources',
+  // Business
+  '/customers',
+  '/vendors',
+  '/finance',
+  '/reports',
+  '/business-health',
+  // Intelligence
+  '/ai',
+  '/ai-recommendations',
+  '/ai-agents',
+  '/knowledge-base',
+  // System
+  '/notifications',
+  '/settings',
+  '/more',
+];
+
+/**
+ * How many destinations the compact bottom bar can carry. Once it exceeds this,
+ * the test suite fails rather than letting the bar overflow on a phone.
+ */
+export const MAX_BOTTOM_BAR_TABS = 6;
+
+/**
+ * Display order in the compact bottom bar. Deliberately a short, task-forward
+ * subset of the IA: the full navigation lives in the sidebar / drawer.
+ */
+const BOTTOM_BAR_ORDER: readonly DestinationPath[] = [
   '/dashboard',
   '/projects',
   '/tasks',
@@ -131,9 +437,26 @@ export const destinations: readonly Destination[] = ORDER.map((path) => ({
   ...META[path],
 }));
 
+/** The subset of destinations that fits the compact bottom tab bar. */
+export const bottomBarDestinations: readonly Destination[] = BOTTOM_BAR_ORDER.map((path) => ({
+  path,
+  ...META[path],
+}));
+
 /** One destination by path. Total — `DestinationPath` is exhaustive over `META`. */
 export function destinationFor(path: DestinationPath): Destination {
   return { path, ...META[path] };
+}
+
+/**
+ * Every destination in one sidebar group, in sidebar display order.
+ *
+ * The section field on a destination is guaranteed to equal the requested
+ * section by construction: `destinations` is grouped by `section`, so slicing
+ * by it cannot return a member of another group.
+ */
+export function destinationsForSection(section: DestinationSection): readonly Destination[] {
+  return destinations.filter((entry) => entry.section === section);
 }
 
 /**
