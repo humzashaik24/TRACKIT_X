@@ -120,11 +120,27 @@ the final staged-migration phase.
 
 ## Git Commit
 
-`feat(phase-31): deploy Trackit X web to Render`
+`57805e3` — `feat(phase-31): deploy Trackit X web to Render`
+(render.yaml + both docs; 3 files, +414 lines)
 
 ## GitHub Push
 
-See final phase report for push status.
+**FAILED — blocked by GitHub auth.** `git push origin
+fix/format-money-parser-and-date-semantics` returned HTTP 403:
+`Permission to humzashaik24/TRACKIT_X.git denied to HUMZASHAK`. No prior
+commits were pushed, so nothing was rewritten.
+
+Owner action required to unblock the Render handoff: authenticate git against
+GitHub with an account that has write access to `humzashaik24/TRACKIT_X`
+(recommend the owner account + a fine-grained/classic PAT with `repo` scope, or
+`gh auth login`), then run:
+
+```
+git push origin fix/format-money-parser-and-date-semantics
+```
+
+Once that push lands, complete the Render Dashboard steps under
+**Deployment URL → Owner action required** above.
 
 ---
 Phase 31 files: `render.yaml` · `docs/architecture/RENDER_DEPLOYMENT.md` ·
