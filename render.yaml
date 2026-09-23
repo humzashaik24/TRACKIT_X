@@ -1,0 +1,81 @@
+# ---------------------------------------------------------------------------
+# Trackit X — Render Blueprint (Phase 31)
+#
+# This Blueprint provisions ONE service: the Trackit X web application as a
+# Render Static Site.
+#
+# Why a Static Site: `npx expo export --platform web` emits fully static files
+# (index.html + JS/CSS bundles + fonts/icons under dist/). There is no server,
+# so the global CDN Static Site is the correct and cheapest fit. No web service
+# is needed because Expo Router runs entirely in the browser (web.output =
+# "single").
+#
+# Staged migration note: the deployed app STILL uses the existing Supabase
+# project as its backend. The four EXPO_PUBLIC_* variables below are client-safe
+# (URL + publishable/anon key + flags) and are INLINED into the JS bundle at
+# build time. They are not secrets and are set in the Render Dashboard
+# (sync: false), NOT committed here.
+#
+# SERVER SECRETS DO NOT BELONG HERE: SUPABASE_SERVICE_ROLE_KEY, DATABASE_URL,
+# DB_PASSWORD, JWT_SECRET, GEMINI_API_KEY and anything without an EXPO_PUBLIC_
+# consumer must never be added to this file or to any EXPO_PUBLIC_* variable.
+#
+# Reference: https://render.com/docs/blueprint-spec
+# ---------------------------------------------------------------------------
+
+services:
+  - type: web          # static sites use type: web with runtime: static
+    name: trackit-x-web
+    runtime: static
+    repo: https://github.com/humzashaik24/TRACKIT_X
+    # The live Trackit X application currently lives on this branch. When it is
+    # merged to `master`, update this field to `master`.
+    branch: fix/format-money-parser-and-date-semantics
+    # Render installs npm dependencies automatically (package-lock.json), then
+    # runs this build command. Output lands in dist/ (Expo default).
+    buildCommand: npx expo export --platform web
+    # Publish the static export directory produced by the build command.
+    staticPublishPath: ./dist
+    # Re-deploy on every push to the linked branch. (Default for new services;
+    # spelled out so the intent is explicit.)
+    autoDeployTrigger: commit
+
+    envVars:
+      # Node.js version used by the Render build environment. Expo SDK 57
+      # requires Node >= 22.13.x (see https://docs.expo.dev/versions/v57.0.0/).
+      - key: NODE_VERSION
+        value: 22.13.0
+
+      # Vehicle: development | staging | production
+      - key: EXPO_PUBLIC_APP_ENV
+        sync: false   # set in the Render Dashboard; never committed
+
+      # Supabase project URL as seen from the browser, e.g.
+      # https://<project-ref>.supabase.co
+      - key: EXPO_PUBLIC_SUPABASE_URL
+        sync: false
+
+      # Supabase publishable (anon) key. Public by design: every request it
+      # signs is still filtered by Row Level Security. Set in the Dashboard.
+      - key: EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+        sync: false
+
+      # Optional verbose client logging. Keep false in production.
+      - key: EXPO_PUBLIC_DEBUG_LOGGING
+        sync: false
+
+    routes:
+      # Expo Router ships a single-page app (one index.html + JS bundle). Deep
+      # links such as /sign-in exist only on the client, so every path without a
+      # physical file must serve index.html. Render skips this rule for paths
+      # that DO have a file (/_expo/static/*, /assets/*, /favicon.ico), so real
+      # assets are never clobbered.
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+    headers:
+      # Hashed Metro bundles are immutable; long-lived caching avoids refetching.
+      - path: /_expo/static/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
