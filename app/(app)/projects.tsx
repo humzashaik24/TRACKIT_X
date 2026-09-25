@@ -1,15 +1,12 @@
 /**
- * Trackit X — projects placeholder.
+ * Trackit X — projects.
  *
- * Exists so the tab leads somewhere that explains itself. The real screen arrives
- * with the `projects` table in Phase 2; until then this states that plainly rather
- * than rendering an empty list, which a user cannot distinguish from having no
- * projects. All copy comes from the destination table, so the tab and the screen
- * cannot describe the feature differently.
+ * Real data, read from `public.projects` and shaped by RLS. The route only names
+ * the screen; the view resolves the active organization and owns the data, for the
+ * reason given in `employees.tsx`.
  */
-import { ComingNext } from '@/components/navigation/ComingNext';
-import { destinationFor } from '@/navigation/destinations';
+import { ProjectListView } from '@/features/projects/ProjectListView';
 
 export default function ProjectsScreen() {
-  return <ComingNext destination={destinationFor('/projects')} />;
+  return <ProjectListView />;
 }

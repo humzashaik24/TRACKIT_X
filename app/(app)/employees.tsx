@@ -1,15 +1,18 @@
 /**
- * Trackit X — employees placeholder.
+ * Trackit X — employees.
  *
- * Worth a note specific to this tab: the dashboard already shows a member count, and
- * that number is accounts with access to the workspace — not headcount. Employee
- * records are a separate table with wage basis, skills and documents, and none of it
- * exists yet. Showing the access count here under the word "Employees" would turn a
- * true number into a false one, so this screen shows no number at all.
+ * Now a real screen, not a placeholder. The header note this file used to carry —
+ * that a member count is not a headcount — has become the rule the directory is
+ * built around rather than a warning about what is missing, so it now lives in
+ * `EmployeeDirectoryView` where the numbers actually are.
+ *
+ * The route stays thin — it names the screen and nothing else. The view reads the
+ * active organization from `OrganizationContext` itself, so a route that also
+ * resolved it would add a second path by which the same screen gets its tenant,
+ * and the two could disagree.
  */
-import { ComingNext } from '@/components/navigation/ComingNext';
-import { destinationFor } from '@/navigation/destinations';
+import { EmployeeDirectoryView } from '@/features/employees/EmployeeDirectoryView';
 
 export default function EmployeesScreen() {
-  return <ComingNext destination={destinationFor('/employees')} />;
+  return <EmployeeDirectoryView />;
 }

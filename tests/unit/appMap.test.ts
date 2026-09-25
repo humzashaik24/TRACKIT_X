@@ -8,7 +8,8 @@
  *  · the sidebar groups match the intended information architecture;
  *  · the compact bottom bar never exceeds its constraint, and only shows
  *    destinations that also exist in the sidebar;
- *  · `ready` stays honest — exactly the two finished screens are marked ready;
+ *  · `ready` stays honest — exactly the four finished screens are marked ready,
+ *    and a ready destination does not still advertise a future phase;
  *  · every destination resolves to a real route file, so a menu item cannot
  *    silently point at a screen that does not exist (the "expose only routes
  *    that actually exist" rule);
@@ -102,9 +103,34 @@ describe('destinations — structure', () => {
 });
 
 describe('destinations — honesty of `ready`', () => {
+  /**
+   * The exact set of finished screens.
+   *
+   * Listed literally rather than asserted as "at least two" or "more than last
+   * time", because this flag is a promise to the user that a tab leads somewhere
+   * real. A test that only checks the count would pass just as happily if
+   * `/attendance` had been marked ready by mistake, which is precisely the failure
+   * the flag exists to prevent. Updating this list is a deliberate act.
+   */
+  const READY_PATHS: readonly string[] = [
+    '/dashboard',
+    '/employees',
+    '/more',
+    '/projects',
+  ];
+
   it('marks exactly the finished screens as ready', () => {
     const ready = destinations.filter((entry) => entry.ready);
-    expect(ready.map((entry) => entry.path).sort()).toEqual(['/dashboard', '/more']);
+    expect([...ready.map((entry) => entry.path)].sort()).toEqual([...READY_PATHS].sort());
+  });
+
+  it('says a ready destination is available now', () => {
+    // `arrivesIn` is read by the placeholder screen, and a ready destination has no
+    // placeholder. "Phase 2" on a finished screen is stale copy that would survive
+    // into a future edit unnoticed.
+    for (const entry of destinations.filter((value) => value.ready)) {
+      expect(entry.arrivesIn).toBe('Available now');
+    }
   });
 
   it('says when each unfinished module arrives', () => {
