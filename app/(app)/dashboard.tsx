@@ -1,24 +1,46 @@
 /**
  * Trackit X — dashboard.
  *
- * ── The rule this screen is built around ────────────────────────────────────
- * Not one number on this screen is invented. Phase 1 has exactly two tables —
- * `organizations` and `organization_members` — so exactly one real business figure
- * exists: how many people have access to this workspace. That figure is read from
- * the database and shown. Everything else says, in words, that it is not built yet.
+ * ── What changed in Phase 34 ────────────────────────────────────────────────────
+ * The previous version of this screen had exactly one real figure on it, because the
+ * database had two tables. It now has fourteen and five data sources, so the same rule
+ * that governed that version governs this one, at a hundred times the temptation:
  *
- * The temptation here is obvious and worth naming: a dashboard with one number on it
- * looks unfinished, and filling the space with plausible revenue, a health score of
- * 78, and three AI insights would make it look finished in a screenshot. It would
- * also be the single most damaging thing this codebase could do — a business owner
- * who acts on a fabricated figure loses real money, and once they discover one
- * invented number they are right to distrust every other number in the product.
+ *   Every number here is counted from a row that exists.
  *
- * So the sections are laid out in their final shape, and each one states what it
- * will show and what has to exist first. An empty frame is honest. A full one built
- * from nothing is not.
+ * `useDashboardSnapshot` reads `employees`, `projects` and `tasks` for the active
+ * organization, counts `organization_members`, and hands the result to a pure function
+ * that derives every figure on this screen. Nothing is entered by hand, nothing is
+ * estimated, and nothing is sampled. The full derivation lives in
+ * `src/features/dashboard/metrics.ts`, and `DashboardSnapshot` is the typed contract
+ * that comes out of it — which is also the shape a later AI provider would consume,
+ * should one ever be built. Building the contract now, with no provider behind it, is
+ * the point: an assistant added later gets a verified summary to reason over rather
+ * than a query it invented at runtime.
+ *
+ * ── What is deliberately absent, and the four questions behind it ───────────────
+ * 1. NO TREND LINES AND NO DELTAS. A `MetricCard` here can draw a sparkline and a
+ *    signed change. Neither is used, because a delta needs two points in time and this
+ *    schema stores current state with no history. It is the most conspicuous omission
+ *    on the screen and the most defensible.
+ * 2. NO ACTIVITY FEED. There is no event log, so a feed would have to be inferred from
+ *    row timestamps, which is a guess about what happened rather than a record of it.
+ * 3. NO HEALTH SCORE, REVENUE, OR AI INSIGHT. Kept below as named `notBuilt` sections
+ *    so the absence is visible and explained instead of looking like an oversight.
+ * 4. NO WORKLOAD FOR MEMBERS. Counts of other people's open tasks are not shown to a
+ *    non-manager. See `canViewTeamWorkload`.
+ *
+ * ── On the permission gate, precisely ───────────────────────────────────────────
+ * `organization_members` is readable by any member of the organization — an owner is an
+ * employee too, and reading that table is how a member sees their own headcount. So a
+ * workload panel is not a second security boundary; it is a product decision about
+ * whose attention a number is for. The honest version of that decision is to not render
+ * the panel at all, with no lock icon and no "restricted" badge, rather than a
+ * placeholder that invites a reader to wonder what they are not being shown.
  */
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
+
+import { useRouter } from 'expo-router';
 
 import { BOTTOM_BAR_CLEARANCE } from '@/components/navigation/AppShell';
 import { PageHeader } from '@/components/navigation/PageHeader';
@@ -33,60 +55,97 @@ import {
   EmptyState,
   HStack,
   Icon,
-  MetricCard,
   ScreenContainer,
   Text,
   useResponsive,
   useStyles,
   VStack,
 } from '@/design-system';
+import { canViewTeamWorkload } from '@/domain/dashboard';
 import { BUSINESS_TYPE_LABELS, isBusinessType, ROLE_LABELS } from '@/domain/organization';
+import { DashboardLoading } from '@/features/dashboard/DashboardLoading';
+import { DashboardOverview } from '@/features/dashboard/DashboardOverview';
 import { DashboardSection } from '@/features/dashboard/DashboardSection';
-import { useWorkforceSnapshot } from '@/features/dashboard/useWorkforceSnapshot';
+import { ProjectPanel } from '@/features/dashboard/ProjectPanel';
+import { useDashboardSnapshot } from '@/features/dashboard/useDashboardSnapshot';
+import { WorkPanel } from '@/features/dashboard/WorkPanel';
+import { WorkloadPanel } from '@/features/dashboard/WorkloadPanel';
 import { deriveBreadcrumbs } from '@/navigation/breadcrumbs';
-import { countLabel, formatNumber } from '@/utils/format';
+import {
+  destinationFor,
+  type Destination,
+  type DestinationPath,
+} from '@/navigation/destinations';
 
 const styles = createStyles((theme) => ({
-  grid: {
+  grow: {
+    flex: 1,
+  },
+  stamp: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space[2],
+    paddingHorizontal: theme.space[3],
+    paddingVertical: theme.space[2],
+    borderRadius: theme.radius.sm,
+    backgroundColor: theme.colors.surfaceInset,
+    borderWidth: 1,
+    borderColor: theme.colors.borderSubtle,
+  },
+  notBuiltGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: theme.space[3],
   },
-  gridItem: {
-    // Two per row on a phone, three on a tablet, and the flex basis lets the last
-    // item stretch rather than leaving a ragged gap.
+  notBuiltItem: {
     flexGrow: 1,
-    flexBasis: 150,
-  },
-  grow: {
-    flex: 1,
+    flexBasis: 260,
   },
 }));
 
 /**
- * The body of a section whose tables do not exist yet: what it will show, and the
- * one thing that has to be built first. No fake rows, no disabled buttons.
+ * The gaps worth naming on a dashboard, and only those.
+ *
+ * The sidebar already lists every unfinished destination, so repeating all twenty here
+ * would be noise. This is the subset a business owner would reasonably expect to find on
+ * a dashboard and cannot: the score, the money, the stock, and the assistant. Each one
+ * is absent because a table it depends on does not exist, and saying so is more useful
+ * than leaving a hole in the layout.
+ *
+ * The labels, summaries and phase names come from `destinations.ts` — the same table the
+ * navigation is built from — so this cannot drift from the sidebar, and tapping a card
+ * lands on the destination's own placeholder screen, which says the same thing in full.
  */
-function NotBuiltYet({
-  icon,
-  headline,
-  detail,
-}: {
-  icon: 'projects' | 'tasks' | 'inventory' | 'aiInsight' | 'health';
-  headline: string;
-  detail: string;
-}) {
+const DASHBOARD_GAPS: readonly DestinationPath[] = [
+  '/business-health',
+  '/finance',
+  '/inventory',
+  '/ai',
+];
+
+function NotBuiltYet({ destination }: { readonly destination: Destination }) {
   const s = useStyles(styles);
+  const router = useRouter();
 
   return (
-    <Card variant="outline" padding={4}>
+    <Card variant="outline" padding={4} style={s.notBuiltItem}>
       <HStack gap={3} align="flex-start">
-        <Icon name={icon} size="md" tone="tertiary" />
+        <Icon name={destination.icon} size="md" tone="tertiary" />
         <VStack gap={1} style={s.grow}>
-          <Text variant="label">{headline}</Text>
+          <HStack gap={2} align="center" wrap>
+            <Text variant="label">{destination.longLabel}</Text>
+            <Badge label={destination.arrivesIn} intent="warning" variant="soft" size="sm" />
+          </HStack>
           <Text variant="bodySm" tone="secondary">
-            {detail}
+            {destination.summary}
           </Text>
+          <Button
+            label="See what is planned"
+            variant="ghost"
+            size="sm"
+            iconRight="chevronRight"
+            onPress={() => router.push(destination.path)}
+          />
         </VStack>
       </HStack>
     </Card>
@@ -95,30 +154,60 @@ function NotBuiltYet({
 
 export default function DashboardScreen() {
   const s = useStyles(styles);
+  const router = useRouter();
   const { sectionGap } = useResponsive();
   const { displayName } = useAuth();
   const { organization, role, memberships, status: organizationStatus } = useOrganization();
-  const workforce = useWorkforceSnapshot(organization?.id ?? null);
 
-  const refresh = useCallback(async (): Promise<void> => {
-    await workforce.refresh();
-  }, [workforce]);
+  const organizationId = organization?.id ?? null;
+  const dashboard = useDashboardSnapshot(organizationId, role);
+  const { snapshot, status, error, isRefreshing, refresh } = dashboard;
+
+  const onRefresh = useCallback((): void => {
+    void refresh();
+  }, [refresh]);
 
   const businessTypeLabel = isBusinessType(organization?.business_type)
     ? BUSINESS_TYPE_LABELS[organization.business_type]
     : null;
+
+  /*
+   * `role` is passed to the hook rather than resolved to a boolean here, so the rule
+   * lives in one place — `canViewTeamWorkload` — and both the tile and the panel ask the
+   * same question of the same function. A second `role === 'owner' || ...` written here
+   * would be free to drift from it.
+   */
+  const showWorkload = canViewTeamWorkload(role) && snapshot?.workload != null;
+
+  /*
+   * "Empty" is the absence of business records, which is not the same as an
+   * organization with no members. A workspace can have ten people on it and no projects
+   * yet, and that is an empty dashboard rather than an empty company — so the test looks
+   * at the three business tables and not at the header.
+   */
+  const hasBusinessData = useMemo(
+    () =>
+      snapshot !== null &&
+      (snapshot.employees.total > 0 || snapshot.projects.total > 0 || snapshot.tasks.total > 0),
+    [snapshot],
+  );
+
+  /*
+   * The organization context is still resolving on a cold start. The snapshot cannot be
+   * requested without an `organization_id`, so this is a distinct wait from the read
+   * itself and gets the organization's own label rather than the dashboard's.
+   */
+  const waitingForOrganization = organizationStatus === 'loading' && organization === null;
 
   return (
     <ScreenContainer
       edges={['bottom']}
       gap={sectionGap}
       maxWidth="none"
-      refreshing={workforce.isRefreshing}
-      onRefresh={() => {
-        void refresh();
-      }}
+      refreshing={isRefreshing}
+      onRefresh={onRefresh}
       contentStyle={{ paddingBottom: BOTTOM_BAR_CLEARANCE }}
-      loading={organizationStatus === 'loading' && organization === null}
+      loading={waitingForOrganization}
       loadingLabel="Loading your dashboard"
     >
       {/* ── Header ─────────────────────────────────────────────────────────── */}
@@ -135,178 +224,186 @@ export default function DashboardScreen() {
               <Badge label={businessTypeLabel} intent="neutral" variant="outline" size="sm" />
             )}
             {organization === null ? null : (
-              <Badge label={organization.currency} intent="neutral" variant="outline" size="sm" />
+              <Badge
+                label={organization.currency}
+                intent="neutral"
+                variant="outline"
+                size="sm"
+              />
             )}
           </HStack>
         }
       />
 
-      {/* ── 1. Business health ─────────────────────────────────────────────── */}
-      <DashboardSection
-        title="Business health"
-        description="A single score across cash, delivery, workforce and stock."
-        notBuilt="Not scored yet"
-      >
-        <NotBuiltYet
-          icon="health"
-          headline="No score can be computed yet"
-          detail={
-            'The score is a weighted read of finance, project delivery, attendance and ' +
-            'inventory. None of those tables exist yet, and a score derived from nothing ' +
-            'would be a number with no meaning — so there is none.'
-          }
-        />
-      </DashboardSection>
+      {/*
+       * Waiting on the three reads. `DashboardLoading` draws the page's real shape with
+       * the values withheld, so the screen does not reshuffle when the snapshot lands.
+       */}
+      {waitingForOrganization || status === 'loading' ? <DashboardLoading /> : null}
 
-      <Divider subtle />
-
-      {/* ── 2. Today's focus ───────────────────────────────────────────────── */}
-      <DashboardSection
-        title="Today’s focus"
-        description="The few things that need a decision from you today."
-        notBuilt="Phase 2"
-      >
-        <NotBuiltYet
-          icon="tasks"
-          headline="Nothing to surface yet"
-          detail={
-            'This fills in from overdue tasks, approvals waiting on you, and projects ' +
-            'drifting past their milestone dates once tasks and projects exist.'
-          }
-        />
-      </DashboardSection>
-
-      <Divider subtle />
-
-      {/* ── 3. Active projects ─────────────────────────────────────────────── */}
-      <DashboardSection
-        title="Active projects"
-        description="Live jobs with their budget and schedule position."
-        notBuilt="Phase 2"
-      >
-        <NotBuiltYet
-          icon="projects"
-          headline="No projects table yet"
-          detail={
-            'Each card will show one project’s spend against budget and days against ' +
-            'schedule, sorted so the one in trouble is first.'
-          }
-        />
-      </DashboardSection>
-
-      <Divider subtle />
-
-      {/* ── 4. Workforce — the one section with real data ───────────────────── */}
-      <DashboardSection
-        title="Workforce"
-        description="People with access to this workspace, counted in the database."
-        aside={
-          workforce.status === 'error' ? (
+      {/*
+       * A read failed. The whole dashboard is one snapshot, so there is nothing partial
+       * to show alongside it — a screen with the tiles filled in and the distributions
+       * empty would look like a business with no projects, which is a claim, and a
+       * false one. Retry is offered because these are ordinary table reads and the
+       * common cause is a dropped connection.
+       */}
+      {status === 'error' ? (
+        <DashboardSection
+          title="Could not read your dashboard"
+          description="Nothing below is shown, because a partial count would be worse than no count."
+          aside={
             <Button
               label="Retry"
               variant="ghost"
               size="sm"
               iconLeft="retry"
-              onPress={() => {
-                void refresh();
-              }}
+              onPress={onRefresh}
             />
-          ) : undefined
-        }
-      >
-        {workforce.status === 'error' ? (
+          }
+        >
           <Card variant="outline" intent="danger" padding={4}>
             <HStack gap={3} align="flex-start">
               <Icon name="warning" size="md" tone="danger" />
               <VStack gap={1} style={s.grow}>
-                <Text variant="label">Could not read your team</Text>
+                <Text variant="label">The figures did not load</Text>
                 <Text variant="bodySm" tone="secondary">
-                  {workforce.error?.userMessage ??
-                    'Something went wrong. Trying again usually works.'}
+                  {error ??
+                    'Something went wrong reaching the database. Trying again usually works.'}
                 </Text>
               </VStack>
             </HStack>
           </Card>
-        ) : (
-          <VStack gap={3}>
-            <VStack gap={3} style={s.grid}>
-              <MetricCard
-                label="People with access"
-                value={
-                  workforce.memberCount === null ? '—' : formatNumber(workforce.memberCount)
+        </DashboardSection>
+      ) : null}
+
+      {/* ── No business records yet ────────────────────────────────────────── */}
+      {status === 'ready' && !hasBusinessData ? (
+        <EmptyState
+          icon="organization"
+          title="No business records yet"
+          description={
+            memberships.length > 1
+              ? `This workspace has no employees, projects, or tasks. If you were expecting figures, you may be in the wrong workspace — you belong to ${
+                  memberships.length - 1
+                } others.`
+              : 'This workspace has no employees, projects, or tasks yet. Add the first one and this page fills itself in — every figure here is counted from your own records, never estimated.'
+          }
+          action={
+            memberships.length > 1
+              ? {
+                  label: 'Switch workspace',
+                  onPress: () => router.push('/organizations'),
                 }
-                icon="team"
-                intent="accent"
-                loading={workforce.status === 'loading'}
-                footnote={
-                  workforce.memberCount === null
-                    ? undefined
-                    : countLabel(workforce.memberCount, 'member')
-                }
-                style={s.gridItem}
-              />
-              <MetricCard
-                label="Workspaces you belong to"
-                value={formatNumber(memberships.length)}
-                icon="organization"
-                footnote={memberships.length === 1 ? 'This one' : 'Switchable'}
-                style={s.gridItem}
-              />
-            </VStack>
-
-            <Text variant="caption" tone="tertiary">
-              Employee records, attendance and wage cost arrive in Phase 2. Until then
-              this counts accounts with access, which is not the same as headcount.
-            </Text>
-          </VStack>
-        )}
-      </DashboardSection>
-
-      <Divider subtle />
-
-      {/* ── 5. Inventory alerts ────────────────────────────────────────────── */}
-      <DashboardSection
-        title="Inventory alerts"
-        description="Stock that is about to stop work."
-        notBuilt="A later phase"
-      >
-        <NotBuiltYet
-          icon="inventory"
-          headline="No stock is being tracked"
-          detail={
-            'Alerts will come from items below reorder level, batches near expiry, and ' +
-            'stock committed to a project that is not on hand.'
+              : { label: 'Go to projects', onPress: () => router.push('/projects') }
           }
         />
-      </DashboardSection>
+      ) : null}
 
-      <Divider subtle />
-
-      {/* ── 6. AI insights ─────────────────────────────────────────────────── */}
-      <DashboardSection
-        title="AI insights"
-        description="Observations drawn from your data — never invented."
-        notBuilt="A later phase"
-      >
-        <VStack gap={3}>
-          <NotBuiltYet
-            icon="aiInsight"
-            headline="The assistant has nothing to read yet"
-            detail={
-              'Insights are computed from your own records and every one shows what it ' +
-              'was derived from. With two tables and no history there is nothing to draw ' +
-              'a conclusion from, so none are shown.'
+      {/* ── The real dashboard ─────────────────────────────────────────────── */}
+      {status === 'ready' && hasBusinessData && snapshot !== null ? (
+        <>
+          <DashboardSection
+            title="At a glance"
+            description="Counted from your records, across this workspace only."
+            aside={
+              <Button
+                label="Refresh"
+                variant="ghost"
+                size="sm"
+                iconLeft="retry"
+                onPress={onRefresh}
+              />
             }
-          />
-          <EmptyState
-            variant="firstRun"
-            icon="aiSpark"
-            title="Insights need history"
-            description="Once projects, tasks and attendance are recorded, this section fills itself in — with the data basis attached to every claim."
-            inline
-          />
-        </VStack>
-      </DashboardSection>
+          >
+            <VStack gap={3}>
+              <DashboardOverview snapshot={snapshot} canViewWorkload={showWorkload} />
+              {/*
+               * The as-of line, and a note that it is local time.
+               *
+               * Every figure above is a count of rows as they stand the moment the
+               * snapshot is built, and "as of" is what stops a number being read as a
+               * running total that updates itself. `todayKey` is derived in the
+               * organization context's timezone, so a user in a different timezone from
+               * the workspace owner sees their own day — which matters, because
+               * "overdue" was computed against that same key and mixing the two would
+               * make a task overdue by one day for one reader and not the other.
+               */}
+              {snapshot.asOf === null ? null : (
+                <HStack gap={2} align="center" style={s.stamp}>
+                  <Icon name="time" size="sm" tone="tertiary" />
+                  <Text variant="caption" tone="tertiary" style={s.grow}>
+                    As of {snapshot.asOf} your time. Pull down to recount.
+                  </Text>
+                </HStack>
+              )}
+            </VStack>
+          </DashboardSection>
+
+          <Divider subtle />
+
+          {/* ── Projects ───────────────────────────────────────────────────── */}
+          <DashboardSection
+            title="Projects"
+            description="What is live, what state it is in, and what is going to be late."
+          >
+            <ProjectPanel snapshot={snapshot} />
+          </DashboardSection>
+
+          <Divider subtle />
+
+          {/* ── Work ───────────────────────────────────────────────────────── */}
+          <DashboardSection
+            title="Work"
+            description="The task queue, and the two things in it that nobody is on."
+          >
+            <WorkPanel snapshot={snapshot} />
+          </DashboardSection>
+
+          {/* ── Workload ────────────────────────────────────────────────────── */}
+          {/*
+           * Rendered for a manager only, and rendered wholly or not at all. There is no
+           * locked state and no "you do not have access" copy: a member is not being
+           * denied a feature, they are being shown a dashboard suited to their job, and
+           * a panel that announced its own absence would invite the question of what it
+           * was hiding.
+           */}
+          {showWorkload ? (
+            <>
+              <Divider subtle />
+              <DashboardSection
+                title="Workload"
+                description="How open work is spread across the people carrying it."
+              >
+                <WorkloadPanel snapshot={snapshot} />
+              </DashboardSection>
+            </>
+          ) : null}
+        </>
+      ) : null}
+
+      {/*
+       * ── Not built yet ──────────────────────────────────────────────────────
+       * Below the real figures, not above them, so the dashboard leads with what is
+       * true. Each card links to its own placeholder screen, which carries the full
+       * explanation — so this section is a signpost rather than a second copy.
+       */}
+      {status === 'ready' ? (
+        <>
+          <Divider subtle />
+          <DashboardSection
+            title="Not built yet"
+            description="Named here so their absence is deliberate rather than an oversight."
+            notBuilt="Later phases"
+          >
+            <VStack style={s.notBuiltGrid}>
+              {DASHBOARD_GAPS.map((path) => (
+                <NotBuiltYet key={path} destination={destinationFor(path)} />
+              ))}
+            </VStack>
+          </DashboardSection>
+        </>
+      ) : null}
     </ScreenContainer>
   );
 }
