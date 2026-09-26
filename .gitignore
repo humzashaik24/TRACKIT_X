@@ -61,3 +61,14 @@ yarn-error.*
 .DS_Store
 Thumbs.db
 *.pem
+
+# ---------------------------------------------------------------------------
+# Generated local artifacts
+#
+# `npm run db:types` writes a full dump of the live schema. It is committed nowhere
+# on purpose: a regeneration on a machine with a different Supabase CLI version
+# produces a large diff of unrelated churn, which is far more expensive to review
+# than the assurance is worth. `src/types/database.ts` is the tracked copy, and the
+# generated file exists so a reviewer can diff the two and confirm they agree.
+# ---------------------------------------------------------------------------
+src/types/database.generated.ts

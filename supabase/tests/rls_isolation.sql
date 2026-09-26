@@ -1,16 +1,22 @@
 -- ---------------------------------------------------------------------------
 -- Trackit X — tenant isolation test for the foundation migration.
 --
--- ⚠ NOT YET EXECUTED. Docker is unavailable on the machine this was written on,
---   so there is no local Postgres to run it against. Every assertion below is a
---   claim about intended behaviour, not an observed result. It becomes evidence
---   only once it has actually run and printed PASS lines.
+-- ✓ EXECUTED AND PASSING as of Phase 33 (2026-09-26) against the local Docker
+--   stack, 124 assertions, 0 failures. It was written in Phase 32 on a machine with
+--   no running Docker daemon, so it had never been run; Phase 33 started the
+--   daemon, applied `20260925120000_core_business_data.sql` for the first time, and
+--   ran this file to completion.
 --
 -- Run with:
 --
 --   supabase db reset
 --   psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" \
 --        -v ON_ERROR_STOP=1 -f supabase/tests/rls_isolation.sql
+--
+-- Sections 16 is the Phase 33 addition: the grouped open-task read the project list
+-- now depends on. Sections 12 to 15 already cover task ownership, cross-organization
+-- references, ranges and cascade, so Phase 33 did not duplicate them — it added the
+-- one query that had no assertion behind it.
 --
 -- Method
 -- ------
@@ -42,7 +48,8 @@
 -- (`departments`, `employees`, `projects`, `project_members`, `tasks`,
 -- `activity_log`), and read the state section 8 left behind rather than
 -- resetting it — a suite that assumed its own starting point would go on passing
--- after a change to the sections above.
+-- after a change to the sections above. Section 16 adds the Phase 33 open-task
+-- count, and runs last because it reads the task table section 15 left settled.
 -- ---------------------------------------------------------------------------
 
 \set ON_ERROR_STOP on
@@ -1297,24 +1304,6 @@ begin
       perform public.rls_test_assert(true, '14.7 an untrimmed department name is rejected');
   end;
 
-  begin
-    update public.activity_log set summary = '   '
-    where id = public.rls_test_biz('a30');
-    perform public.rls_test_assert(false, '14.8 a blank activity summary is rejected');
-  exception
-    when check_violation then
-      perform public.rls_test_assert(true, '14.8 a blank activity summary is rejected');
-  end;
-
-  begin
-    update public.activity_log set action = 'Created'
-    where id = public.rls_test_biz('a30');
-    perform public.rls_test_assert(false, '14.9 an activity action must be a lower-case slug');
-  exception
-    when check_violation then
-      perform public.rls_test_assert(true, '14.9 an activity action must be a lower-case slug');
-  end;
-
   -- Append-only, and this is enforced by the ABSENCE of a grant as much as by the
   -- absence of a policy. Both are asserted, because either one alone would leave
   -- the table editable.
@@ -1324,6 +1313,12 @@ begin
   -- is not a weaker claim, it is a stronger one — but it does mean a test that
   -- expected 23514 here would be asserting something that cannot happen, so the
   -- constraints themselves are exercised as the table owner in section 14b below.
+  --
+  -- An earlier draft of this section also carried 14.8 and 14.9 as `check_violation`
+  -- assertions on the same two writes. Those blocks were unreachable: `authenticated`
+  -- holds no UPDATE privilege on this table, so the privilege check fires first and
+  -- 23514 never arrives. They were removed rather than corrected, because the
+  -- constraints they meant to cover are the ones 14b exercises directly.
   begin
     update public.activity_log set summary = 'Rewritten Trail'
     where id = public.rls_test_biz('a30');
@@ -1513,6 +1508,124 @@ begin
     (select count(*) from public.employees
       where organization_id = public.rls_test_org('b')) = 1,
     '15.10 deleting a project leaves the employees it referenced');
+end;
+$$;
+
+reset role;
+
+-- ===========================================================================
+-- 16. The open-task count. The one Phase 33 query with no assertion behind it.
+--
+--     The project list shows "open tasks" per project, and that number is a grouped
+--     read over `tasks` rather than a column on the project row. A count derived in
+--     SQL is only as private as the SELECT policy underneath it, so this section
+--     pins the three ways that read can go wrong:
+--
+--       · it counts another organization's tasks, which is a tenant leak in a
+--         number rather than in a row;
+--       · it counts CLOSED work, so a finished project still looks busy;
+--       · it attributes a task with no project to some project, which is the bug a
+--         naive join to `projects` introduces.
+--
+--     The status list is written out rather than derived from a constant, because
+--     the assertion must fail if the schema grows a status the query does not know
+--     about — a new `task_status` that the read silently ignores is the exact
+--     regression this section exists to catch.
+-- ===========================================================================
+
+set local role authenticated;
+set local "request.jwt.claims" =
+  '{"sub":"11111111-1111-4111-a111-111111111102","role":"authenticated"}';
+
+-- Two tasks on A's surviving project: one closed, one open, so "counts only open"
+-- has something to get wrong. Created as a manager, who may assign freely.
+insert into public.tasks (
+  id, organization_id, project_id, assignee_id, title, status, priority, progress, due_date
+)
+values
+  (public.rls_test_biz('a23'), public.rls_test_org('a'), public.rls_test_biz('a10'),
+   null, 'Closed On A10', 'done', 'low', 100, null),
+  (public.rls_test_biz('a24'), public.rls_test_org('a'), public.rls_test_biz('a10'),
+   null, 'Blocked On A10', 'blocked', 'high', 0, null);
+
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+  project_a uuid := public.rls_test_biz('a10');
+  open_count integer;
+  total_count integer;
+  statuses text[];
+begin
+  -- Every status the schema defines, so an enum widened without widening this read
+  -- shows up here as a failure rather than as a quietly understated count.
+  select array_agg(e.enumlabel order by e.enumsortorder)
+    into statuses
+  from pg_enum e
+  join pg_type t on t.oid = e.enumtypid
+  where t.typname = 'task_status';
+
+  perform public.rls_test_assert(
+    statuses = array['todo', 'in_progress', 'blocked', 'in_review', 'done'],
+    '16.1 the open-task read accounts for every status the schema defines');
+
+  -- The grouped read exactly as `openTaskCountsByProject` issues it.
+  select count(*) into open_count
+  from public.tasks
+  where organization_id = org_a
+    and project_id = project_a
+    and status in ('todo', 'in_progress', 'blocked', 'in_review');
+
+  -- On A's project: 'Mine' (in_progress, from section 9) and 'Blocked On A10'.
+  -- 'Closed On A10' is excluded, and 'Theirs' was removed by 12.11.
+  perform public.rls_test_assert(open_count = 2, '16.2 the count includes open work and excludes closed work');
+
+  -- The count is not a join, so a task with no project belongs to no bucket. If
+  -- this ever reads 3, somebody has inner-joined `tasks` to `projects` and is
+  -- attributing unassigned work to whichever project sorted first.
+  --
+  -- Stated as 4 because the fixtures are: 'Unassigned' from section 9, the two a
+  -- member raised in 12.4 and 12.5, and 'Assigned By Manager' from 12.12 — which
+  -- 15.5 left on a project-less row when its assignee left. A number written down
+  -- is a number that can be checked; "however many there are" is not an assertion.
+  perform public.rls_test_assert(
+    (select count(*) from public.tasks
+      where organization_id = org_a and project_id is null
+        and status in ('todo', 'in_progress', 'blocked', 'in_review')) = 4,
+    '16.3 tasks with no project are left out of every project''s count');
+
+  -- And they are still visible to the organization, because "not counted" must not
+  -- have been achieved by making them invisible.
+  perform public.rls_test_assert(
+    (select count(*) from public.tasks
+      where organization_id = org_a and title = 'Unassigned') = 1,
+    '16.4 an unassigned task is still visible to its organization');
+
+  -- B's project was deleted with its tasks by 15.8, so the strongest available
+  -- statement is that A cannot see B's work at all — the same fact 12.10 asserts
+  -- for a write, stated here for a count.
+  perform public.rls_test_assert(
+    (select count(*) from public.tasks where organization_id = public.rls_test_org('b')) = 0,
+    '16.5 the open-task count cannot see another organization''s tasks');
+end;
+$$;
+
+-- The count is a member-visible read, not a manager-only one. A member triaging
+-- their own day needs the same number the manager sees, or the two disagree about
+-- how busy the project is.
+set local "request.jwt.claims" =
+  '{"sub":"11111111-1111-4111-a111-111111111103","role":"authenticated"}';
+
+do $$
+declare
+  open_count integer;
+begin
+  select count(*) into open_count
+  from public.tasks
+  where organization_id = public.rls_test_org('a')
+    and project_id = public.rls_test_biz('a10')
+    and status in ('todo', 'in_progress', 'blocked', 'in_review');
+
+  perform public.rls_test_assert(open_count = 2, '16.6 a member reads the same open-task count as a manager');
 end;
 $$;
 

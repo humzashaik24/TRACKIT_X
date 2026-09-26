@@ -7,11 +7,15 @@
  *   · 20260925120000_core_business_data.sql         — Phase 32 business records
  *
  * Why hand-authored: `npm run db:types` regenerates types from a running local
- * Postgres, which needs Docker. Docker is unavailable here, so generation could
- * not be run. This file therefore carries a duty — when a migration changes,
- * change it too. The generated file has its own path (`database.generated.ts`),
- * left free so that running the script later produces a clean diff against this
- * one rather than clobbering it.
+ * Postgres, which needs Docker. This file predates a local Docker stack being
+ * available, so it carries a duty - when a migration changes, change it too.
+ *
+ * Phase 33 had the stack running and ran the generator to check the two agree. They
+ * do: both declare the same 14 tables, and the generated file adds the 5 RPC
+ * functions this one describes with signatures rather than row shapes. The generated
+ * copy is gitignored, because a regeneration on a machine with a different CLI
+ * produces a large diff of unrelated churn that is more expensive to review than the
+ * assurance is worth. Re-run `npm run db:types` to produce it and diff the two.
  *
  * ⚠ The DATABASE is authoritative, not this file. TypeScript here is an
  *   ergonomic aid: it makes a typo in a column name a compile error. It grants

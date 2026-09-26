@@ -63,6 +63,7 @@ import {
   type ProjectListEntry,
 } from '@/features/projects/useProjects';
 import { useEmployeeDirectory } from '@/features/employees/useEmployeeDirectory';
+import { useOpenTaskCounts } from '@/features/tasks/useTasks';
 import { projectBadgeSpec } from '@/features/shared/statusBadges';
 import { deriveBreadcrumbs } from '@/navigation/breadcrumbs';
 import { countLabel, formatDate, formatNumber } from '@/utils/format';
@@ -137,6 +138,11 @@ export function ProjectListView() {
   // Two independent reads rather than one joined response: a person who is not an
   // employee is not a candidate, and the picker must not offer them.
   const directory = useEmployeeDirectory(organizationId);
+  // Open tasks per project, so the list can say where the work actually is rather
+  // than only that a project exists. Its own read: a count is a fact about the tasks
+  // pointing at a project, and folding it into the project query would mean the
+  // project row cannot be rendered without it.
+  const openTasks = useOpenTaskCounts(organizationId);
 
   const [sort, setSort] = useState<DataTableSort | undefined>({ columnKey: 'name', direction: 'asc' });
   const [isCreating, setIsCreating] = useState(false);
@@ -282,6 +288,24 @@ export function ProjectListView() {
         render: (entry) => formatNumber(entry.memberCount),
       },
       {
+        /*
+         * Open tasks, per project.
+         *
+         * Not sortable. The count arrives from a second read that lands
+         * independently of the rows, so a header that sorts would re-order on a
+         * number the caller did not choose and cannot see changing. A column that
+         * reorders itself underneath a tap is worse than a column that stays put.
+         */
+        key: 'openTasks',
+        header: 'Open tasks',
+        width: 0.9,
+        numeric: true,
+        render: (entry) => {
+          const open = openTasks.countFor(entry.project.id);
+          return open === 0 ? '—' : formatNumber(open);
+        },
+      },
+      {
         key: 'target',
         header: 'Target',
         width: 1.1,
@@ -291,7 +315,7 @@ export function ProjectListView() {
           entry.project.target_date === null ? '—' : formatDate(entry.project.target_date),
       },
     ],
-    [s, today, progressCell],
+    [s, today, progressCell, openTasks],
   );
 
   return (
@@ -301,7 +325,7 @@ export function ProjectListView() {
       maxWidth="none"
       refreshing={projects.isRefreshing}
       onRefresh={() => {
-        void projects.refresh();
+        void Promise.all([projects.refresh(), openTasks.refresh()]);
       }}
       contentStyle={{ paddingBottom: BOTTOM_BAR_CLEARANCE }}
       loading={projects.isLoading && projects.rows.length === 0}

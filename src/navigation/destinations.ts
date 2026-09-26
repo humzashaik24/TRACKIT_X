@@ -176,9 +176,10 @@ const META: Record<DestinationPath, DestinationMeta> = {
     label: 'Tasks',
     longLabel: 'Tasks',
     icon: 'tasks',
-    ready: false,
-    summary: 'Work assigned to a person or a team, with due dates and dependencies.',
-    arrivesIn: 'Phase 2',
+    ready: true,
+    summary:
+      'A unit of work with a status, a priority and a due date, assignable to a person or to nobody.',
+    arrivesIn: 'Available now',
     section: 'work',
     bottomBar: true,
   },

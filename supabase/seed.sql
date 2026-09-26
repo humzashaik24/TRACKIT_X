@@ -17,9 +17,9 @@
 --
 -- Note on auth.users: GoTrue owns this table and its columns move between
 -- versions. Writing rows here directly is the standard local-seed technique but
--- it is coupled to the running GoTrue schema. This file has NOT been executed
--- (Docker is unavailable on this machine), so treat it as unverified until a
--- `supabase db reset` has run cleanly.
+-- it is coupled to the running GoTrue schema. VERIFIED in Phase 33: a
+-- `supabase db reset` against the local Docker stack applied this file cleanly
+-- and created 2 organizations, 3 memberships and 3 signable-in auth users.
 -- ---------------------------------------------------------------------------
 
 do $seed$

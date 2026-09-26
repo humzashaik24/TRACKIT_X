@@ -32,11 +32,18 @@ import {
   PROJECT_PRIORITIES,
 } from '@/domain/project';
 import {
+  canAssignTaskTo,
+  canAssignTasksToOthers,
+  canCreateTasks,
+  canEditTask,
   canRecordOwnProgress,
   daysUntilDue,
   isTaskOverdue,
+  isTaskSortKey,
+  sortTasks,
   TASK_STATUSES,
   taskPriorityWeight,
+  type SortableTask,
 } from '@/domain/task';
 import {
   employeeDisplayName,
@@ -305,6 +312,207 @@ describe('task — overdue', () => {
     expect(daysUntilDue('2026-05-22', '2026-06-01')).toBe(-10);
     expect(daysUntilDue('2026-06-01', '2026-06-01')).toBe(0);
     expect(daysUntilDue(null, '2026-06-01')).toBeNull();
+  });
+});
+
+/**
+ * Rows for the sort cases. Ids are deliberately the tiebreak alphabet, so any case
+ * that relies on the id tiebreak says so in its own name.
+ */
+function sortable(
+  id: string,
+  overrides: Partial<SortableTask> = {},
+): SortableTask {
+  return {
+    id,
+    title: 'Task',
+    status: 'todo',
+    priority: 'medium',
+    due_date: null,
+    assignee_id: null,
+    ...overrides,
+  };
+}
+
+describe('task — sorting', () => {
+  it('leaves the rows alone when no sort is asked for', () => {
+    const rows = [sortable('b'), sortable('a')];
+    expect(sortTasks(rows, undefined, (row) => row)).toBe(rows);
+  });
+
+  it('puts undated tasks last going up', () => {
+    // The bug this guards: ranking a missing date as `''` sorts it BELOW every
+    // `YYYY-MM-DD`, so ascending put the undated task at the TOP of the list.
+    const rows = [
+      sortable('undated'),
+      sortable('late', { due_date: '2026-06-20' }),
+      sortable('early', { due_date: '2026-06-10' }),
+    ];
+
+    expect(
+      sortTasks(rows, { key: 'due', direction: 'asc' }, (row) => row).map((row) => row.id),
+    ).toEqual(['early', 'late', 'undated']);
+  });
+
+  it('puts undated tasks last going down too', () => {
+    const rows = [
+      sortable('undated'),
+      sortable('late', { due_date: '2026-06-20' }),
+      sortable('early', { due_date: '2026-06-10' }),
+    ];
+
+    expect(
+      sortTasks(rows, { key: 'due', direction: 'desc' }, (row) => row).map((row) => row.id),
+    ).toEqual(['late', 'early', 'undated']);
+  });
+
+  it('keeps undated tasks last when every row is undated', () => {
+    const rows = [sortable('b'), sortable('a'), sortable('c')];
+    // All null means the id tiebreak decides, and it must decide the same way in
+    // both directions — otherwise the toggle appears to reorder a list of nothing.
+    expect(
+      sortTasks(rows, { key: 'due', direction: 'asc' }, (row) => row).map((row) => row.id),
+    ).toEqual(['a', 'b', 'c']);
+    expect(
+      sortTasks(rows, { key: 'due', direction: 'desc' }, (row) => row).map((row) => row.id),
+    ).toEqual(['a', 'b', 'c']);
+  });
+
+  it('orders status by the lifecycle, not alphabetically', () => {
+    const rows = [
+      sortable('a', { status: 'done' }),
+      sortable('b', { status: 'todo' }),
+      sortable('c', { status: 'in_review' }),
+    ];
+
+    expect(
+      sortTasks(rows, { key: 'status', direction: 'asc' }, (row) => row).map((row) => row.status),
+    ).toEqual(['todo', 'in_review', 'done']);
+  });
+
+  it('orders priority by urgency, not alphabetically', () => {
+    const rows = [
+      sortable('a', { priority: 'urgent' }),
+      sortable('b', { priority: 'low' }),
+      sortable('c', { priority: 'high' }),
+    ];
+
+    expect(
+      sortTasks(rows, { key: 'priority', direction: 'asc' }, (row) => row).map((row) => row.priority),
+    ).toEqual(['low', 'high', 'urgent']);
+  });
+
+  it('breaks ties on the id, so equal rows do not depend on engine order', () => {
+    const rows = [sortable('c', { priority: 'high' }), sortable('a', { priority: 'high' })];
+
+    expect(
+      sortTasks(rows, { key: 'priority', direction: 'asc' }, (row) => row).map((row) => row.id),
+    ).toEqual(['a', 'c']);
+  });
+
+  it('returns a new array rather than sorting the caller\'s', () => {
+    const rows = [sortable('b', { title: 'B' }), sortable('a', { title: 'A' })];
+    const sorted = sortTasks(rows, { key: 'title', direction: 'asc' }, (row) => row);
+
+    expect(sorted).not.toBe(rows);
+    expect(rows.map((row) => row.id)).toEqual(['b', 'a']);
+  });
+
+  it('rejects a sort key it does not know rather than falling through to title', () => {
+    // Falling through would render a "sorted by due date" header over a title sort.
+    expect(isTaskSortKey('due')).toBe(true);
+    expect(isTaskSortKey('nonsense')).toBe(false);
+    expect(isTaskSortKey(undefined)).toBe(false);
+  });
+});
+
+describe('task — who may do what', () => {
+  it('lets every role raise a task, including a plain member', () => {
+    // The policy gates where the work GOES, not whether somebody may notice it needs
+    // doing. A member who cannot raise a ticket writes it on paper instead.
+    expect(canCreateTasks('member')).toBe(true);
+    expect(canCreateTasks('manager')).toBe(true);
+    expect(canCreateTasks('admin')).toBe(true);
+    expect(canCreateTasks('owner')).toBe(true);
+  });
+
+  it('raises nothing for a caller with no role in the organization', () => {
+    // `member` is the floor of the hierarchy, so an absent role is the only way to be
+    // below it. While the role is still loading this must be false, or the "New task"
+    // button appears before the app knows the caller is allowed to press it.
+    expect(canCreateTasks(null)).toBe(false);
+    expect(canCreateTasks(undefined)).toBe(false);
+  });
+
+  it('reserves handing work to somebody else for managers and up', () => {
+    expect(canAssignTasksToOthers('member')).toBe(false);
+    expect(canAssignTasksToOthers('manager')).toBe(true);
+    expect(canAssignTasksToOthers('owner')).toBe(true);
+  });
+
+  it('offers a member exactly two assignee targets: themselves and nobody', () => {
+    expect(canAssignTaskTo('member', 'employee-1', 'employee-1')).toBe(true);
+    expect(canAssignTaskTo('member', 'employee-1', null)).toBe(true);
+    expect(canAssignTaskTo('member', 'employee-1', 'employee-2')).toBe(false);
+  });
+
+  it('lets a manager assign to anybody, or to nobody', () => {
+    expect(canAssignTaskTo('manager', 'employee-1', 'employee-2')).toBe(true);
+    expect(canAssignTaskTo('manager', 'employee-1', null)).toBe(true);
+  });
+
+  it('refuses a member with no employee row every target, unassigning included', () => {
+    // A login with no employee row cannot be shown to be assigning to itself, and
+    // "unassign" is not a choice it can be shown to be making either.
+    expect(canAssignTaskTo('member', null, null)).toBe(false);
+    expect(canAssignTaskTo('member', null, 'employee-1')).toBe(false);
+  });
+
+  it('still lets a manager assign with no employee row of their own', () => {
+    // The manager grant comes from the role, not from being an employee, so the
+    // missing-row case above must not leak into it.
+    expect(canAssignTaskTo('manager', null, 'employee-1')).toBe(true);
+    expect(canAssignTaskTo('manager', null, null)).toBe(true);
+  });
+
+  it('lets a member edit a task assigned to them', () => {
+    expect(
+      canEditTask(
+        { assignee_id: 'employee-1' },
+        { role: 'member', currentEmployeeId: 'employee-1' },
+      ),
+    ).toBe(true);
+  });
+
+  it('refuses a member somebody else\'s task', () => {
+    expect(
+      canEditTask(
+        { assignee_id: 'employee-2' },
+        { role: 'member', currentEmployeeId: 'employee-1' },
+      ),
+    ).toBe(false);
+  });
+
+  it('refuses the assignee\'s own task while the role is still unknown', () => {
+    // `tasks_update_own_or_managers` opens with `is_organization_member`, and an absent
+    // role is not a member of anything. Without the member floor this returns true and
+    // draws an edit form whose every save is refused.
+    expect(
+      canEditTask(
+        { assignee_id: 'employee-1' },
+        { role: null, currentEmployeeId: 'employee-1' },
+      ),
+    ).toBe(false);
+  });
+
+  it('refuses editing a task with no assignee to a member, and allows it to a manager', () => {
+    // Unassigned means unowned, so there is no "own" for the member rule to match.
+    expect(
+      canEditTask({ assignee_id: null }, { role: 'member', currentEmployeeId: 'employee-1' }),
+    ).toBe(false);
+    expect(
+      canEditTask({ assignee_id: null }, { role: 'manager', currentEmployeeId: 'employee-1' }),
+    ).toBe(true);
   });
 });
 

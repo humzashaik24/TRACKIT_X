@@ -15,7 +15,14 @@
 import { supabase } from '@/lib/supabase';
 import { anyColumnIlike } from '@/lib/postgrestFilters';
 import { employeeDisplayName, type EmployeeRow } from '@/domain/employee';
-import { isTaskOverdue, normalizeTaskTitle, type TaskPriority, type TaskRow, type TaskStatus } from '@/domain/task';
+import {
+  isTaskOverdue,
+  normalizeTaskTitle,
+  OPEN_TASK_STATUSES,
+  type TaskPriority,
+  type TaskRow,
+  type TaskStatus,
+} from '@/domain/task';
 import { clampProgress } from '@/domain/progress';
 import type { TablesInsert, TablesUpdate } from '@/types/database';
 import { appError } from '@/utils/errors';
@@ -144,7 +151,7 @@ export async function listTasks(
       // whose due date slipped is history, not a late delivery.
       query = query
         .lt('due_date', options.today)
-        .in('status', ['todo', 'in_progress', 'blocked', 'in_review']);
+        .in('status', [...OPEN_TASK_STATUSES]);
     }
 
     query = query
@@ -497,6 +504,53 @@ export async function listOverdueTasks(
   today: string,
 ): Promise<ActionResult<readonly TaskListEntry[]>> {
   return listTasks(organizationId, { overdueOnly: true, today });
+}
+
+/**
+ * How many OPEN tasks each project is carrying, keyed by project id.
+ *
+ * ── Why this is one query and not one count per project ──────────────────────
+ * A list of N projects asking "how many tasks are open on this one" is N round trips,
+ * and the natural place to put that loop — the project list — is a screen that loads
+ * on every organization switch. So the two small columns come back once and the tally
+ * is done here. This is the same trade `listTaskAssignees` makes above, and the same
+ * reason: two nullable columns for the whole business is a cheaper read than a
+ * request per row, and the alternative silently degrades into a screen that is
+ * unusably slow once there are enough projects to notice.
+ *
+ * A project with no open tasks is ABSENT from the map rather than mapped to zero, so
+ * `map.get(id) ?? 0` at the call site is a decision made once, in one place, instead
+ * of every screen inventing its own default. Tasks on no project are excluded: this
+ * function answers "what is this project carrying", and an unprojected task is
+ * carrying nothing here — see the header of `src/domain/task.ts`.
+ *
+ * The status list is `OPEN_TASK_STATUSES` rather than a literal, which is the point
+ * worth making: this and the `overdueOnly` filter above are the only two places in
+ * the client that decide which tasks are unfinished, and both now read the one array
+ * in the domain. Retyping the list here would have left a query that keeps working
+ * and quietly stops counting a status the day somebody adds one.
+ */
+export async function openTaskCountsByProject(
+  organizationId: string,
+): Promise<ActionResult<ReadonlyMap<string, number>>> {
+  const result = await attempt(async () => {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('project_id, status')
+      .eq('organization_id', organizationId)
+      .in('status', [...OPEN_TASK_STATUSES]);
+    if (error !== null) throw error;
+    return data;
+  }, 'NETWORK_UNAVAILABLE');
+
+  if (!result.ok) return result;
+
+  const counts = new Map<string, number>();
+  for (const row of result.value ?? []) {
+    if (row.project_id === null) continue;
+    counts.set(row.project_id, (counts.get(row.project_id) ?? 0) + 1);
+  }
+  return ok(counts);
 }
 
 /** Whether one of a caller's own rows is late. Client-side counterpart of the query. */

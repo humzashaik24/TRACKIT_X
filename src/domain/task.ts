@@ -227,10 +227,212 @@ export function assigneeNameFor(
 }
 
 // ---------------------------------------------------------------------------
+// Sorting
+// ---------------------------------------------------------------------------
+
+/**
+ * The columns a task list can be ordered by.
+ *
+ * A union rather than `string` so a `DataTable` column key cannot be typed at the
+ * screen and then silently fall through `sortTasks`' switch to the title branch —
+ * which would render a header that claims to sort by due date while sorting by name.
+ */
+export type TaskSortKey = 'title' | 'status' | 'priority' | 'due' | 'assignee';
+
+export const TASK_SORT_KEYS: readonly TaskSortKey[] = [
+  'title',
+  'status',
+  'priority',
+  'due',
+  'assignee',
+];
+
+export function isTaskSortKey(value: unknown): value is TaskSortKey {
+  return typeof value === 'string' && (TASK_SORT_KEYS as readonly string[]).includes(value);
+}
+
+export interface TaskSort {
+  readonly key: TaskSortKey;
+  readonly direction: 'asc' | 'desc';
+}
+
+/**
+ * The minimum a row must carry to be ordered.
+ *
+ * A structural type rather than `TaskRow` or a service entry, so this module does not
+ * need to know which layer built the thing it is sorting. The caller projects whatever
+ * it holds onto these six fields with the `select` argument — a bare `TaskRow` is
+ * already one, and a list entry is one unwrapping away.
+ */
+export interface SortableTask {
+  readonly id: string;
+  readonly title: string;
+  readonly status: TaskStatus;
+  readonly priority: TaskPriority;
+  readonly due_date: string | null;
+  readonly assignee_id: string | null;
+}
+
+/**
+ * Orders tasks, returning a new array.
+ *
+ * ── Why undated tasks sort last in BOTH directions ───────────────────────────
+ * Postgres sorts NULL last when ascending and first when descending, which for a due
+ * date means flipping the toggle moves every undated task from the bottom of the list
+ * to the top of it. Both orderings are the wrong answer: there is no date to order
+ * them by, so they are placed after the dated rows and stay there. A task appearing
+ * first under "due descending" would read as the most urgent thing on the screen.
+ *
+ * The same reasoning drives `status` and `priority` to rank against
+ * `TASK_STATUSES` / `TASK_PRIORITIES` rather than being compared as text: those
+ * arrays are the order work moves through, and alphabetical order breaks the reading
+ * in both directions.
+ */
+export function sortTasks<Row>(
+  rows: readonly Row[],
+  sort: TaskSort | undefined,
+  select: (row: Row) => SortableTask,
+): readonly Row[] {
+  if (sort === undefined) return rows;
+  const sign = sort.direction === 'asc' ? 1 : -1;
+
+  const rank = (task: SortableTask): number | string => {
+    switch (sort.key) {
+      case 'status':
+        return TASK_STATUSES.indexOf(task.status);
+      case 'priority':
+        return taskPriorityRank(task.priority);
+      case 'assignee':
+        return task.assignee_id ?? '';
+      case 'due':
+        return task.due_date ?? '';
+      case 'title':
+      default:
+        return task.title;
+    }
+  };
+
+  return [...rows].sort((a, b) => {
+    const leftTask = select(a);
+    const rightTask = select(b);
+
+    /*
+     * Undated tasks are pulled out of the comparison entirely rather than ranked as
+     * an empty string, and that is the whole fix.
+     *
+     * Ranking a missing date as `''` looks like it would work and does not: `''` sorts
+     * below every `YYYY-MM-DD`, so it lands LAST going down but FIRST going up. The
+     * toggle would move the undated tasks from the top of the list to the bottom on
+     * every click. Deciding the direction here instead, and only after both sides are
+     * known to have a date, is what makes "last in both directions" true.
+     *
+     * A single `null` argument is not enough to report "these are equal" — an
+     * undated task is not equal to a dated one, it is ranked below all of them.
+     */
+    if (sort.key === 'due') {
+      const leftDue = leftTask.due_date;
+      const rightDue = rightTask.due_date;
+      if (leftDue === null || rightDue === null) {
+        if (leftDue !== rightDue) return leftDue === null ? 1 : -1;
+        return leftTask.id.localeCompare(rightTask.id);
+      }
+    }
+
+    const left = rank(leftTask);
+    const right = rank(rightTask);
+    // Id as the tiebreak, not the array position: rows reorder when the sort changes,
+    // and a comparator that returns 0 for equals makes the resulting order depend on
+    // the engine rather than on the data.
+    if (left === right) return leftTask.id.localeCompare(rightTask.id);
+    return left < right ? -sign : sign;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Authority
 //
-// UI affordances only. The policy is the authority: `tasks_delete_managers`.
+// UI affordances only. The policy is the authority: `tasks_insert_members`,
+// `tasks_update_own_or_managers`, `tasks_delete_managers`.
 // ---------------------------------------------------------------------------
+
+/**
+ * Raises a new task.
+ *
+ * Every role can, including `member` — `tasks_insert_members` gates only WHERE THE
+ * WORK GOES, not whether a person may notice something needs doing. A member who
+ * cannot raise their own ticket is a member who writes it on paper instead.
+ */
+export function canCreateTasks(role: OrganizationRole | null | undefined): boolean {
+  return hasAtLeastRole(role, 'member');
+}
+
+/**
+ * Hands work to somebody else. Manager and above.
+ *
+ * The one role check the task policies share, and the reason a member's task picker
+ * offers exactly two options: themselves, and nobody.
+ */
+export function canAssignTasksToOthers(role: OrganizationRole | null | undefined): boolean {
+  return hasAtLeastRole(role, 'manager');
+}
+
+/**
+ * Whether this caller may leave a task with this person on it.
+ *
+ * A member may choose `null` or their own id, and nothing else — which is
+ * `tasks_insert_members`'s `with check` and `tasks_update_own_or_managers`'s, clause
+ * for clause. A manager is checked first and answered `true` for every target,
+ * including with no employee row, because their grant does not depend on being an
+ * employee.
+ *
+ * The `currentEmployeeId === null` case therefore answers `false` for every target
+ * *on the member path*, including `null`: a login with no employee row cannot be shown
+ * to be assigning to itself, so returning `true` would offer a control whose only
+ * correct value is the one already selected.
+ */
+export function canAssignTaskTo(
+  role: OrganizationRole | null | undefined,
+  currentEmployeeId: string | null,
+  targetEmployeeId: string | null,
+): boolean {
+  if (canAssignTasksToOthers(role)) return true;
+  // Tested before the `null` case on purpose. "Unassigned" is a legitimate target for
+  // a member WITH an employee row; for a login WITHOUT one it is not, because there
+  // is nothing to show the control would have been assigning away from. Answering
+  // `true` there offers a picker whose only selectable value is the one already set.
+  if (currentEmployeeId === null) return false;
+  if (targetEmployeeId === null) return true;
+  return targetEmployeeId === currentEmployeeId;
+}
+
+/**
+ * Whether this caller may edit this task.
+ *
+ * ── Why an UNASSIGNED task is manager-only, and that is not a bug ────────────
+ * `tasks_update_own_or_managers` is written as
+ * `assignee_id = employee_id_for_user(...)`, and an `assignee_id` of NULL never
+ * equals an employee id — so a member cannot edit a task nobody owns. It could be
+ * written as `assignee_id is null or ...`, and it deliberately is not: a task with no
+ * owner is unowned because nobody has had the authority to give it one, and letting
+ * any member claim it would make "unassigned" a queue anybody could silently drain.
+ * Reporting it as an edit restriction is more honest than working around it.
+ */
+export function canEditTask(
+  task: { readonly assignee_id: string | null },
+  context: {
+    readonly role: OrganizationRole | null | undefined;
+    readonly currentEmployeeId: string | null;
+  },
+): boolean {
+  if (canAssignTasksToOthers(context.role)) return true;
+  // The member floor is not decorative. `tasks_update_own_or_managers` opens with
+  // `is_organization_member(organization_id)`, and a viewer is below member in the
+  // hierarchy - so a viewer who happened to be the assignee still fails the policy.
+  // Without this check the screen would draw an edit form that every save refuses.
+  if (!hasAtLeastRole(context.role, 'member')) return false;
+  if (context.currentEmployeeId === null) return false;
+  return task.assignee_id === context.currentEmployeeId;
+}
 
 /** Deletes a task. Manager and above. */
 export function canDeleteTasks(role: OrganizationRole | null | undefined): boolean {
