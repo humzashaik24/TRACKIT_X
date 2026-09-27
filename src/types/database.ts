@@ -84,6 +84,35 @@ export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'in_review' | 'don
 /** `public.task_priority`. Relative urgency of a task. */
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 
+/** `public.ai_connection_status`. Written only by the AI Gateway, as service_role. */
+export type AIConnectionStatus = 'unverified' | 'connected' | 'failed';
+
+/** `public.ai_provider`. Mirrors `AIProviderId` in `src/domain/ai/types.ts`. */
+export type AIProviderKey = 'gemini' | 'openai' | 'anthropic';
+
+/**
+ * `ai_provider_configs` as the client is permitted to see it.
+ *
+ * There is no `secret_reference` field, and that is not an omission in the type —
+ * the `authenticated` role holds no SELECT privilege on that column, so no query
+ * can return it. `credential_present` is a generated boolean derived from it: the
+ * single credential-related fact the browser can read.
+ */
+export type AIProviderConfigRow = {
+  readonly id: Uuid;
+  readonly organization_id: Uuid;
+  readonly provider: AIProviderKey;
+  readonly display_name: string;
+  readonly enabled: boolean;
+  readonly is_default: boolean;
+  readonly selected_model: string;
+  readonly credential_present: boolean;
+  readonly connection_status: AIConnectionStatus;
+  readonly last_tested_at: Timestamp | null;
+  readonly created_at: Timestamp;
+  readonly updated_at: Timestamp;
+};
+
 /** `public.activity_entity`. Which record an activity entry describes. */
 export type ActivityEntity =
   | 'employee'
@@ -564,7 +593,7 @@ export type Database = {
           },
         ];
       };
-    };
+
     /**
      * `{ [_ in never]: never }`, not `Record<string, never>`.
      *
@@ -575,6 +604,39 @@ export type Database = {
      * "Property 'x' does not exist on type 'never'". An empty mapped type has no
      * keys at all, which is what "there are no views" actually means.
      */
+      ai_provider_configs: {
+        Row: AIProviderConfigRow;
+        /**
+         * Restricted to the columns the `authenticated` role holds INSERT on.
+         *
+         * `is_default` is absent because it moves only through
+         * `set_default_ai_provider`. `secret_reference` and `connection_status`
+         * are absent because no client may write them.
+         */
+        Insert: {
+          organization_id: Uuid;
+          provider: AIProviderKey;
+          display_name: string;
+          enabled?: boolean;
+          selected_model: string;
+        };
+        /** Same restriction as `Insert`. `organization_id` is immutable. */
+        Update: {
+          display_name?: string;
+          enabled?: boolean;
+          selected_model?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'ai_provider_configs_organization_id_fkey';
+            columns: ['organization_id'];
+            isOneToOne: false;
+            referencedRelation: 'organizations';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+    };
     Views: { [_ in never]: never };
     Functions: {
       /**
@@ -583,6 +645,22 @@ export type Database = {
        * There is deliberately no role parameter: the caller becomes the owner of
        * the organization they just created and cannot ask for anything else.
        */
+      /**
+       * Returns safe metadata only. The composite row type is deliberately not
+       * used, because it carries `secret_reference`.
+       */
+      set_default_ai_provider: {
+        Args: {
+          p_organization_id: Uuid;
+          p_provider: AIProviderKey;
+        };
+        Returns: AIProviderConfigRow;
+      };
+      /** Admin only. Leaves the organization with no default provider. */
+      clear_default_ai_provider: {
+        Args: { p_organization_id: Uuid };
+        Returns: undefined;
+      };
       create_organization: {
         Args: {
           p_name: string;

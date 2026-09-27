@@ -1,11 +1,18 @@
 -- ---------------------------------------------------------------------------
 -- Trackit X — tenant isolation test for the foundation migration.
 --
--- ✓ EXECUTED AND PASSING as of Phase 33 (2026-09-26) against the local Docker
---   stack, 124 assertions, 0 failures. It was written in Phase 32 on a machine with
---   no running Docker daemon, so it had never been run; Phase 33 started the
---   daemon, applied `20260925120000_core_business_data.sql` for the first time, and
---   ran this file to completion.
+-- ✓ Sections 1 to 16: EXECUTED AND PASSING as of Phase 33 (2026-09-26) against
+--   the local Docker stack, 124 assertions, 0 failures. It was written in Phase 32
+--   on a machine with no running Docker daemon, so it had never been run; Phase 33
+--   started the daemon, applied `20260925120000_core_business_data.sql` for the
+--   first time, and ran this file to completion.
+--
+-- ✗ Section 17 (AI provider configurations): WRITTEN BUT NOT EXECUTED. Phase 35
+--   added it and no Docker daemon was available in that environment, so no
+--   execution result is claimed for it, or for this file as a whole since. It is 39
+--   assertions in four groups: tenancy, role gates, the column-level secret
+--   boundary, and database invariants. Run the file to verify it along with
+--   everything above.
 --
 -- Run with:
 --
@@ -16,7 +23,9 @@
 -- Sections 16 is the Phase 33 addition: the grouped open-task read the project list
 -- now depends on. Sections 12 to 15 already cover task ownership, cross-organization
 -- references, ranges and cascade, so Phase 33 did not duplicate them — it added the
--- one query that had no assertion behind it.
+-- one query that had no assertion behind it. Section 17 is the Phase 35 addition:
+-- it runs last, reads the same fixtures, and is the only place the column-level
+-- secret boundary is asserted, because that property is invisible to a client test.
 --
 -- Method
 -- ------
@@ -1626,6 +1635,596 @@ begin
     and status in ('todo', 'in_progress', 'blocked', 'in_review');
 
   perform public.rls_test_assert(open_count = 2, '16.6 a member reads the same open-task count as a manager');
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 17. Phase 35 - AI provider configurations: tenancy, RBAC and the secret
+--     boundary.
+--
+-- Runs last, after section 16, and reads the fixture organizations the earlier
+-- sections created. It asserts four separate things, and it is worth keeping them
+-- apart, because each is enforced by a different mechanism and they fail in
+-- different ways:
+--
+--   17.A  Tenancy. RLS policies. A cross-organization read returns zero rows; a
+--         cross-organization write matches no rows.
+--   17.B  Role gates. RLS policies plus the SECURITY DEFINER RPCs. A member is
+--         refused; an admin is not.
+--   17.C  The secret boundary. COLUMN privileges, not RLS. This is the part a
+--         policy cannot express: `secret_reference` is not merely hidden by a
+--         `WHERE` clause, it is unreadable and unwritable by the `authenticated`
+--         role. Both refusals RAISE, because a privilege failure is an error and
+--         not a filtered result.
+--   17.D  Database invariants. One default per organization, a disabled provider
+--         cannot become the default, and the service-role-only functions refuse a
+--         client caller.
+--
+-- Fixtures: organization A has a_owner, a_admin and a_member. Organization B has
+-- b_owner. See the header for the full layout.
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- 17.A / 17.B  An admin can configure; a member cannot; another tenant sees
+--               nothing and can change nothing.
+-- ---------------------------------------------------------------------------
+
+set local role authenticated;
+set local "request.jwt.claims" =
+  '{"sub":"11111111-1111-4111-a111-111111111102","role":"authenticated"}';
+
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+  created_id uuid;
+begin
+  -- Only the columns the client role may write. `is_default`, `secret_reference`
+  -- and `connection_status` are deliberately absent: attempting them is 17.C.
+  insert into public.ai_provider_configs (
+    organization_id, provider, display_name, enabled, selected_model
+  ) values (
+    org_a, 'gemini', 'Google Gemini', true, 'gemini-3.6-flash'
+  ) returning id into created_id;
+
+  perform public.rls_test_assert(
+    created_id is not null,
+    '17.1 An organization admin can create a provider configuration'
+  );
+
+  perform public.rls_test_assert(
+    (select is_default from public.ai_provider_configs where id = created_id) = false,
+    '17.2 A new configuration is never marked default by the client'
+  );
+
+  perform public.rls_test_assert(
+    (select connection_status from public.ai_provider_configs where id = created_id) = 'unverified',
+    '17.3 A new configuration starts unverified, so it cannot look connected'
+  );
+
+  perform public.rls_test_assert(
+    (select credential_present from public.ai_provider_configs where id = created_id) = false,
+    '17.4 credential_present is false until a server-side handle exists'
+  );
+end;
+$$;
+
+-- A member of organization A may read the configuration metadata.
+set local "request.jwt.claims" =
+  '{"sub":"11111111-1111-4111-a111-111111111103","role":"authenticated"}';
+
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+  read_provider public.ai_provider;
+  visible integer;
+begin
+  select count(*) into visible
+  from public.ai_provider_configs
+  where organization_id = org_a;
+
+  perform public.rls_test_assert(
+    visible = 1,
+    '17.5 A member of organization A can read its provider configuration'
+  );
+
+  select provider into read_provider
+  from public.ai_provider_configs
+  where organization_id = org_a;
+
+  perform public.rls_test_assert(
+    read_provider = 'gemini',
+    '17.6 A member reads the provider metadata'
+  );
+end;
+$$;
+
+-- A member cannot insert. The INSERT policy requires admin, so the row is
+-- filtered by the WITH CHECK and the insert raises.
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+  refused boolean := false;
+begin
+  begin
+    insert into public.ai_provider_configs (
+      organization_id, provider, display_name, enabled, selected_model
+    ) values (
+      org_a, 'openai', 'OpenAI', true, 'gpt-5.6'
+    );
+  exception
+    when new_row_violates_row_level_security_policy or check_violation then
+      refused := true;
+  end;
+
+  perform public.rls_test_assert(refused, '17.7 A member cannot insert a provider configuration');
+
+  perform public.rls_test_assert(
+    (select count(*) from public.ai_provider_configs where organization_id = org_a) = 1,
+    '17.8 The refused member insert left no row behind'
+  );
+end;
+$$;
+
+-- A member cannot update. A policy-filtered UPDATE returns zero rows rather than
+-- raising, which is why the evidence of refusal is the row count.
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+  matched integer;
+begin
+  update public.ai_provider_configs
+  set enabled = false
+  where organization_id = org_a;
+
+  get diagnostics matched = row_count;
+
+  perform public.rls_test_assert(matched = 0, '17.9 A member update is filtered by RLS');
+  perform public.rls_test_assert(
+    (select enabled from public.ai_provider_configs where organization_id = org_a) = true,
+    '17.10 The configuration is unchanged after the refused member update'
+  );
+end;
+$$;
+
+-- A member cannot call the default-switching RPC.
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+  refused boolean := false;
+begin
+  begin
+    perform public.set_default_ai_provider(org_a, 'gemini');
+  exception
+    when insufficient_privilege then
+      refused := true;
+  end;
+
+  perform public.rls_test_assert(refused, '17.11 A member cannot call set_default_ai_provider');
+end;
+$$;
+
+-- Organization B: an owner of another tenant sees nothing and changes nothing.
+set local "request.jwt.claims" =
+  '{"sub":"11111111-1111-4111-b111-111111111101","role":"authenticated"}';
+
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+  org_b uuid := public.rls_test_org('b');
+  visible integer;
+  matched integer;
+  created_count integer;
+begin
+  select count(*) into visible
+  from public.ai_provider_configs
+  where organization_id = org_a;
+
+  perform public.rls_test_assert(
+    visible = 0,
+    '17.12 Organization B cannot read organization A provider configuration'
+  );
+
+  update public.ai_provider_configs
+  set enabled = false
+  where organization_id = org_a;
+
+  get diagnostics matched = row_count;
+
+  perform public.rls_test_assert(
+    matched = 0,
+    '17.13 Organization B cannot modify organization A provider configuration'
+  );
+
+  insert into public.ai_provider_configs (
+    organization_id, provider, display_name, enabled, selected_model
+  ) values (
+    org_b, 'openai', 'OpenAI', true, 'gpt-5.6'
+  );
+
+  get diagnostics created_count = row_count;
+
+  perform public.rls_test_assert(
+    created_count = 1,
+    '17.14 Organization B can still manage its own configuration'
+  );
+
+  perform public.rls_test_assert(
+    (select enabled from public.ai_provider_configs where organization_id = org_a) = true,
+    '17.15 Organization A configuration survived organization B activity'
+  );
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 17.C  The secret boundary.
+--
+-- These are column-privilege failures, so they RAISE with SQLSTATE 42501 rather
+-- than returning zero rows. A `select *` cannot reach `secret_reference` because
+-- the role holds no SELECT privilege on it; naming the column explicitly is the
+-- only way to ask for it, and that is refused.
+-- ---------------------------------------------------------------------------
+
+do $$
+declare
+  can_read boolean := false;
+begin
+  -- Become organization A's admin again so the caller is otherwise legitimate:
+  -- this refusal must come from the grant, not from a role that lacks access.
+  perform public.set_config(
+    'request.jwt.claims',
+    '{"sub":"11111111-1111-4111-a111-111111111102","role":"authenticated"}',
+    true
+  );
+
+  -- Probed with EXECUTE so the outcome is a boolean, not a value: a plain
+  -- `select secret_reference into` would assign NULL on success here and the
+  -- assertion would pass whether or not the column was readable.
+  begin
+    execute 'select secret_reference from public.ai_provider_configs limit 1';
+    can_read := true;
+  exception
+    when insufficient_privilege then
+      can_read := false;
+  end;
+
+  perform public.rls_test_assert(
+    not can_read,
+    '17.16 An admin cannot SELECT secret_reference: the column is not client-readable'
+  );
+end;
+$$;
+
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+  refused boolean := false;
+begin
+  begin
+    update public.ai_provider_configs
+    set secret_reference = 'vault-handle-a1b2c3d4'
+    where organization_id = org_a;
+  exception
+    when insufficient_privilege then
+      refused := true;
+  end;
+
+  perform public.rls_test_assert(
+    refused,
+    '17.17 A client cannot write secret_reference, even as an admin'
+  );
+end;
+$$;
+
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+  refused_status boolean := false;
+  refused_default boolean := false;
+begin
+  begin
+    update public.ai_provider_configs
+    set connection_status = 'connected'
+    where organization_id = org_a;
+  exception
+    when insufficient_privilege then
+      refused_status := true;
+  end;
+
+  perform public.rls_test_assert(
+    refused_status,
+    '17.18 A client cannot set connection_status, so Connected cannot be fabricated'
+  );
+
+  begin
+    update public.ai_provider_configs
+    set is_default = true
+    where organization_id = org_a;
+  exception
+    when insufficient_privilege then
+      refused_default := true;
+  end;
+
+  perform public.rls_test_assert(
+    refused_default,
+    '17.19 A client cannot set is_default directly; the RPC is the only path'
+  );
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 17.D  Invariants: one default, no disabled default, and server-only writers.
+-- ---------------------------------------------------------------------------
+
+set local "request.jwt.claims" =
+  '{"sub":"11111111-1111-4111-a111-111111111102","role":"authenticated"}';
+
+-- The admin adds a second provider, then moves the default between them.
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+  first_default record;
+  second_default record;
+begin
+  insert into public.ai_provider_configs (
+    organization_id, provider, display_name, enabled, selected_model
+  ) values (
+    org_a, 'anthropic', 'Anthropic', true, 'claude-sonnet-5'
+  );
+
+  perform public.rls_test_assert(
+    (select count(*) from public.ai_provider_configs where organization_id = org_a) = 2,
+    '17.20 An organization may hold several provider configurations'
+  );
+
+  first_default := public.set_default_ai_provider(org_a, 'anthropic');
+
+  perform public.rls_test_assert(
+    first_default.is_default and first_default.provider = 'anthropic',
+    '17.21 set_default_ai_provider marks the target default'
+  );
+
+  perform public.rls_test_assert(
+    first_default.credential_present = false,
+    '17.22 The RPC returns safe metadata only, with no secret reference'
+  );
+
+  second_default := public.set_default_ai_provider(org_a, 'gemini');
+
+  perform public.rls_test_assert(
+    second_default.is_default and second_default.provider = 'gemini',
+    '17.23 The default can be moved to another enabled provider'
+  );
+
+  perform public.rls_test_assert(
+    (select count(*) from public.ai_provider_configs
+      where organization_id = org_a and is_default) = 1,
+    '17.24 Exactly one default exists after switching, never zero and never two'
+  );
+
+  perform public.rls_test_assert(
+    (select is_default from public.ai_provider_configs
+      where organization_id = org_a and provider = 'anthropic') = false,
+    '17.25 The previous default was unset by the same call'
+  );
+end;
+$$;
+
+-- A client cannot set is_default on INSERT, because the column has no INSERT
+-- grant for the authenticated role. This is a column-privilege refusal, so only
+-- insufficient_privilege counts here: accepting unique_violation would let the
+-- test pass even if the column grant were removed, and the partial unique index
+-- is asserted separately, as the service role, in 17.34.
+do $$
+declare
+  refused boolean := false;
+begin
+  begin
+    insert into public.ai_provider_configs (
+      organization_id, provider, display_name, enabled, is_default, selected_model
+    ) values (
+      public.rls_test_org('a'), 'openai', 'OpenAI', true, true, 'gpt-5.6'
+    );
+  exception
+    when insufficient_privilege then
+      refused := true;
+  end;
+
+  perform public.rls_test_assert(
+    refused,
+    '17.26 A client cannot set is_default on INSERT; the column has no INSERT grant'
+  );
+
+  perform public.rls_test_assert(
+    (select count(*) from public.ai_provider_configs
+      where organization_id = public.rls_test_org('a') and is_default) = 1,
+    '17.27 The refused insert left the single default intact'
+  );
+end;
+$$;
+
+-- A disabled provider cannot be made the default.
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+  refused boolean := false;
+begin
+  update public.ai_provider_configs
+  set enabled = false
+  where organization_id = org_a and provider = 'anthropic';
+
+  begin
+    perform public.set_default_ai_provider(org_a, 'anthropic');
+  exception
+    when no_data_found then
+      refused := true;
+  end;
+
+  perform public.rls_test_assert(
+    refused,
+    '17.28 A disabled provider cannot become the default'
+  );
+end;
+$$;
+
+-- The server-side writers refuse a client caller. `auth.role()` is
+-- 'authenticated' here, so both functions must raise before touching a row.
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+  target uuid;
+  refused_reference boolean := false;
+  refused_test boolean := false;
+begin
+  select id into target
+  from public.ai_provider_configs
+  where organization_id = org_a and provider = 'gemini';
+
+  begin
+    perform public.set_ai_provider_secret_reference(target, 'vault-handle-a1b2c3d4');
+  exception
+    when insufficient_privilege then
+      refused_reference := true;
+  end;
+
+  perform public.rls_test_assert(
+    refused_reference,
+    '17.29 Only the AI Gateway may set a secret reference'
+  );
+
+  begin
+    perform public.record_ai_connection_test(target, 'connected');
+  exception
+    when insufficient_privilege then
+      refused_test := true;
+  end;
+
+  perform public.rls_test_assert(
+    refused_test,
+    '17.30 Only the AI Gateway may record a connection test'
+  );
+
+  perform public.rls_test_assert(
+    (select credential_present from public.ai_provider_configs where id = target) = false,
+    '17.31 The refused writers left credential_present false'
+  );
+
+  perform public.rls_test_assert(
+    (select connection_status from public.ai_provider_configs where id = target) = 'unverified',
+    '17.32 The refused connection test left the status unverified'
+  );
+end;
+$$;
+
+-- As the service role, both writers work. This is the only path by which a
+-- provider can become "Connected" or hold a credential.
+set local role service_role;
+set local "request.jwt.claims" =
+  '{"sub":"00000000-0000-0000-0000-000000000000","role":"service_role"}';
+
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+  target uuid;
+  second_default_refused boolean := false;
+begin
+  select id into target
+  from public.ai_provider_configs
+  where organization_id = org_a and provider = 'gemini';
+
+  perform public.set_ai_provider_secret_reference(target, 'vault-handle-a1b2c3d4');
+  perform public.record_ai_connection_test(target, 'connected');
+
+  perform public.rls_test_assert(
+    (select credential_present from public.ai_provider_configs where id = target),
+    '17.33 The service role can store a vault handle, and credential_present follows'
+  );
+
+  perform public.rls_test_assert(
+    (select connection_status from public.ai_provider_configs where id = target) = 'connected'
+      and (select last_tested_at from public.ai_provider_configs where id = target) is not null,
+    '17.34 The service role can record a verified connection test'
+  );
+
+  -- The invariant itself, proved against the only role that is allowed to set
+  -- is_default. A client cannot reach this path, so 17.26 only proves the column
+  -- grant; this proves the partial unique index would hold even if a privileged
+  -- caller tried to write two defaults.
+  begin
+    insert into public.ai_provider_configs (
+      organization_id, provider, display_name, enabled, is_default, selected_model
+    ) values (
+      org_a, 'openai', 'OpenAI', true, true, 'gpt-5.6'
+    );
+  exception
+    when unique_violation then
+      second_default_refused := true;
+  end;
+
+  perform public.rls_test_assert(
+    second_default_refused,
+    '17.35 Even a privileged writer cannot create a second default for one organization'
+  );
+end;
+$$;
+
+-- Back to the client, to confirm the handle it just wrote is still unreadable
+-- and that the derived boolean is all the client learns.
+set local role authenticated;
+set local "request.jwt.claims" =
+  '{"sub":"11111111-1111-4111-a111-111111111102","role":"authenticated"}';
+
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+  present boolean;
+  can_read boolean := false;
+begin
+  select credential_present into present
+  from public.ai_provider_configs
+  where organization_id = org_a and provider = 'gemini';
+
+  perform public.rls_test_assert(
+    present,
+    '17.36 A client can see that a credential exists, as a boolean'
+  );
+
+  begin
+    execute 'select secret_reference from public.ai_provider_configs limit 1';
+    can_read := true;
+  exception
+    when insufficient_privilege then
+      can_read := false;
+  end;
+
+  perform public.rls_test_assert(
+    not can_read,
+    '17.37 The vault handle written by the gateway is still unreadable by a client'
+  );
+end;
+$$;
+
+-- Deleting the configuration drops the handle reference with the row.
+set local role service_role;
+set local "request.jwt.claims" =
+  '{"sub":"00000000-0000-0000-0000-000000000000","role":"service_role"}';
+
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+  remaining integer;
+begin
+  delete from public.ai_provider_configs
+  where organization_id = org_a and provider = 'gemini';
+
+  get diagnostics remaining = row_count;
+
+  perform public.rls_test_assert(remaining = 1, '17.38 A configuration row can be deleted');
+
+  perform public.rls_test_assert(
+    (select count(*) from public.ai_provider_configs
+      where organization_id = org_a and provider = 'gemini') = 0,
+    '17.39 Deleting a configuration removes its credential state'
+  );
 end;
 $$;
 

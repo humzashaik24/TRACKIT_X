@@ -355,10 +355,10 @@ const META: Record<DestinationPath, DestinationMeta> = {
     label: 'Settings',
     longLabel: 'Settings',
     icon: 'settings',
-    ready: false,
+    ready: true,
     summary:
-      'Consolidated application settings. Organization details, appearance and account live under More for now.',
-    arrivesIn: 'A later phase',
+      'Manage organization settings, AI providers, and system preferences.',
+    arrivesIn: 'Available now',
     section: 'system',
     bottomBar: false,
   },

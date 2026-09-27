@@ -123,6 +123,12 @@ const sensitiveValuePatterns: readonly RegExp[] = [
   /\bsb_(secret|publishable)_[A-Za-z0-9_-]{10,}/,
   // Google / Gemini API keys.
   /\bAIza[0-9A-Za-z_-]{20,}/,
+  // OpenAI project keys, and legacy OpenAI keys. The length floor keeps a word
+  // that merely starts "sk" from being treated as a credential.
+  /\bsk-proj-[0-9A-Za-z_-]{16,}/,
+  /\bsk-[0-9A-Za-z]{32,}\b/,
+  // Anthropic API keys.
+  /\bsk-ant-[0-9A-Za-z_-]{16,}/,
   // An Authorization header pasted in whole.
   /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/i,
   // A postgres connection string, which embeds the database password.
