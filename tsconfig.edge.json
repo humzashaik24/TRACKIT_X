@@ -1,0 +1,18 @@
+{
+  "//": "Type-checks the Supabase Edge Function, which the app tsconfig deliberately",
+  "//2": "excludes. The function runs on Deno but is checked with tsc, because the shared",
+  "//3": "code it imports (src/domain/ai, src/utils) is also part of the Expo app and its",
+  "//4": "type-only imports resolve through node_modules. Deno erases those at runtime;",
+  "//5": "tsc still needs to resolve them, and node_modules has the types.",
+  "//6": "",
+  "//7": "Run: npx tsc --noEmit -p tsconfig.edge.json",
+  "//8": "This config is NOT part of `npm run verify`; both are run in the Phase 36 gate.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node", "jest"],
+    "lib": ["esnext", "dom", "dom.iterable"]
+  },
+  "include": ["supabase/functions/**/*.ts"],
+  "exclude": []
+}

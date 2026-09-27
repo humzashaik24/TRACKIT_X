@@ -31,13 +31,17 @@ import {
   GATEWAY_ROUTE_GENERATE,
   GATEWAY_ROUTE_TEST_CONNECTION,
   GATEWAY_UNAVAILABLE_REASON,
-  unavailableGateway,
   type ConnectionTestReport,
 } from '@/domain/ai/gateway';
 import { getProviderDefinition } from '@/domain/ai/registry';
 import type { AIProviderConfig, AIProviderId } from '@/domain/ai/types';
 import { supabase } from '@/lib/supabase';
-import { assertNoCredentialFields, secretVault } from '@/services/aiSecretVault';
+import { assertNoCredentialFields } from '@/services/aiSecretVault';
+import {
+  revokeCredential as gatewayRevokeCredential,
+  submitCredential as gatewaySubmitCredential,
+  testConnection as gatewayTestConnection,
+} from '@/services/aiGatewayService';
 import { appError } from '@/utils/errors';
 import { logger } from '@/utils/logger';
 import { attempt, err, ok, type ActionResult } from '@/utils/result';
@@ -384,40 +388,46 @@ export function getAIGatewayStatus(): AIGatewayStatus {
 export async function testProviderConnection(
   configId: string,
 ): Promise<ActionResult<ConnectionTestReport>> {
-  // Two independent reasons this cannot succeed today, both reported the same
-  // way so the client never learns which applied: no gateway is deployed, and no
-  // credential has ever been stored, because there is no vault to store one in.
-  log.warn('Connection test attempted with no AI Gateway deployed', { configId });
-  return unavailableGateway.testConnection(configId);
+  // Routed through the gateway service, which is the only thing in the client that
+  // speaks to the Edge Function. It is still refused while `GATEWAY_AVAILABLE` is
+  // false, so the reason a caller sees is unchanged until a gateway is deployed.
+  return gatewayTestConnection(configId);
 }
 
 /**
  * Hands a credential to the server-side vault.
+ *
+ * Takes a `configId`, not an `organizationId` and a `provider`. That is the whole
+ * point of the Phase 36 gateway: the organization is read from the configuration
+ * row the server authorizes, so a client cannot name the organization a credential
+ * is stored against. The previous signature asked the client for both, which the
+ * gateway protocol now rejects outright.
  *
  * Returns `void` on success. The caller re-reads the configuration afterwards,
  * which will then report `credential_present`; the credential itself is never
  * returned, never written to a column the client can read, and never logged.
  */
 export async function submitProviderCredential(params: {
-  readonly organizationId: string;
-  readonly provider: AIProviderId;
+  readonly configId: string;
   readonly credential: string;
 }): Promise<ActionResult<undefined>> {
-  if (getProviderDefinition(params.provider) === undefined) {
-    return err(
-      appError('VALIDATION_FAILED', `Unknown AI provider '${params.provider}'.`, {
-        context: { provider: params.provider },
-      }),
-    );
-  }
-
-  const result = await secretVault.store({
-    organizationId: params.organizationId,
-    provider: params.provider,
+  const result = await gatewaySubmitCredential({
+    configId: params.configId,
     credential: params.credential,
   });
 
-  // `err` of a different error type is not assignable, so the vault's error is
-  // returned as-is. It is already a user-safe AppError with a vetted message.
+  return result.ok ? ok(undefined) : result;
+}
+
+/**
+ * Removes a stored credential.
+ *
+ * Idempotent, so a second revoke is not an error the user has to understand.
+ */
+export async function revokeProviderCredential(
+  configId: string,
+): Promise<ActionResult<undefined>> {
+  const result = await gatewayRevokeCredential(configId);
+
   return result.ok ? ok(undefined) : result;
 }

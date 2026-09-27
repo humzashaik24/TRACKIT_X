@@ -9,8 +9,43 @@
 --
 -- ✓ Section 17 (AI provider configurations): EXECUTED AND PASSING as of Phase 35
 --   verification (2026-09-27), 40 assertions, 0 failures, against the local stack
---   `trackit-x` on PostgreSQL 17.6. Whole file: 164 assertions, 0 failures, and the
---   transaction rolls back, so nothing is kept.
+--   `trackit-x` on PostgreSQL 17.6. The transaction rolls back, so nothing is kept.
+--
+--   The "Whole file: 164 assertions" figure this note used to carry was never
+--   measured; it was 124 + 40 done on paper. Re-running the file at HEAD in Phase
+--   36 counts 163, because sections 1 to 16 execute 123, not 124. Corrected here
+--   rather than left standing, because the count is a claim about evidence and the
+--   whole file is evidence about claims.
+--
+-- ✓ Section 18 (AI Gateway vault access): EXECUTED AND PASSING as of Phase 36
+--   verification (2026-09-27), 78 assertions, 0 failures, 0 errors. Whole file:
+--   241 assertions, 0 failures, 0 errors, against the same local stack. Counted
+--   from the run, not from the call sites: the 18.7 to 18.9 loop asserts three
+--   times per function across five functions, so static counting undercounts it.
+--
+--   Writing this section found two real defects in the migration it covers, both
+--   of which made credential storage permanently unrecoverable. Both are recorded
+--   at 18.E and 18.J, where the regression tests live, and both are fixed in
+--   `20260927130000_ai_gateway_vault.sql`:
+--     · `ai_gateway_store_credential` decided between update and create by casting
+--       `secret_reference` to uuid. `set_ai_provider_secret_reference` accepts any
+--       text, so a non-uuid handle raised and abandoned the call every time.
+--     · It then hit `vault.secrets`' unique index on `name`, so a surviving vault
+--       row whose reference had been cleared produced a duplicate-key error the
+--       administrator could not act on. The branch now keys off the name.
+--
+--   It also failed five times before passing, every time on the test rather than
+--   on the migration, and two of those failures are worth recording because they
+--   are the suite working as intended:
+--     · 18.16 and the 18.F block selected `ai_provider_configs` while impersonating
+--       `service_role`, which is exactly the privilege 18.1 denies. The state of a
+--       deleted credential is now observed through the RPCs the gateway can
+--       actually reach, and the client-visible columns are asserted as
+--       `authenticated`, the role that reads them.
+--     · 18.J had to restore the JWT claims after 18.H set them to an authenticated
+--       user. The first call was refused with "Only the AI Gateway may use this
+--       function" -- the `auth.role()` guard catching a mismatched fixture, which
+--       is the guard doing its job rather than a broken test.
 --
 --   It did not pass on the first run. Phase 35 wrote it but could not execute it,
 --   because that environment had no Docker daemon, and the first execution here
@@ -2397,6 +2432,928 @@ begin
       where organization_id = org_a and provider = 'gemini') = 0,
     '17.38 Deleting a configuration removes its credential state'
   );
+end;
+$$;
+
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- Section 18 (AI Gateway vault access): Phase 36
+--
+-- Covers `20260927130000_ai_gateway_vault.sql` -- the five `ai_gateway_*`
+-- functions that are the only route from the Edge Function to
+-- `ai_provider_configs` and to Supabase Vault.
+--
+-- The property under test is not "can a client read a secret"; Phase 35 settled
+-- that. It is the one Phase 36 introduced:
+--
+--   The service role can reach AI credential state ONLY through a function that
+--   has already checked, in SQL, in the same transaction, that the acting user is
+--   a member of the configuration's organization with the required rank.
+--
+-- That has two halves and both are asserted. The negative half: the service role
+-- holds no table privilege that would let it skip the functions. The positive
+-- half: a function refuses a non-member, refuses a member below the required
+-- rank, and refuses a caller that is not the service role at all.
+--
+-- A negative-only section would pass against a migration that granted
+-- `service_role` SELECT on the table and left the functions as decoration, which
+-- is the specific regression this section exists to catch. That is why 18.1
+-- through 18.13 and 18.43 through 18.48 exist as well as the happy paths.
+--
+-- Method. These functions are SECURITY DEFINER and are the only ones in the
+-- schema that return plaintext, so they are asserted through their observable
+-- contract -- SQLSTATE, and the value returned -- never through their source.
+-- Refusals are matched on SQLSTATE, not on message text, per the file header.
+--
+-- Roles note. Section 8.5 demotes `a_admin` to manager, and 17.0 pins that, so
+-- organization A has an owner and a manager but NO admin when this section runs.
+-- The admin threshold is the interesting one for writes, so 18.A adds a dedicated
+-- admin and a dedicated manager rather than mutating a role another section
+-- depends on. Every role is pinned by 18.0 so a later edit fails with an
+-- explanation instead of an opaque 42501 three hundred lines down.
+-- ---------------------------------------------------------------------------
+
+reset role;
+
+-- 18.A: a gateway-specific manager and admin, so this section does not depend on
+-- the role of a fixture user that sections 8 and 17 are entitled to change.
+insert into auth.users (
+  instance_id, id, aud, role, email, encrypted_password,
+  email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
+  created_at, updated_at,
+  confirmation_token, recovery_token, email_change, email_change_token_new
+)
+select
+  '00000000-0000-0000-0000-000000000000',
+  g.uid,
+  'authenticated', 'authenticated',
+  'gw_' || g.who || '@rls-test.invalid',
+  'no-login-possible',
+  now(), '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb,
+  now(), now(), '', '', '', ''
+from (values
+  ('gw_admin',   '11111111-1111-4111-a111-111111111a01'::uuid),
+  ('gw_manager', '11111111-1111-4111-a111-111111111a02'::uuid)
+) as g(who, uid);
+
+insert into public.organization_members (organization_id, user_id, role)
+values
+  (public.rls_test_org('a'), '11111111-1111-4111-a111-111111111a01', 'admin'),
+  (public.rls_test_org('a'), '11111111-1111-4111-a111-111111111a02', 'manager');
+
+-- Fixtures: the two configurations this section uses are the ones section 17
+-- already created, looked up rather than inserted. That is deliberate on two
+-- counts. `(organization_id, provider)` is unique, so inserting a third
+-- 'openai' row for organization B would fail; and reusing the real rows means
+-- this section runs against the table as section 17 left it, including the
+-- derived columns and the partial unique default index, instead of against a
+-- tidier table of its own making.
+--
+-- Both are read as the owner, because `service_role` cannot SELECT here at all
+-- (asserted as 18.1, which is the whole reason these functions exist).
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+  org_b uuid := public.rls_test_org('b');
+  cfg_a uuid;
+  cfg_b uuid;
+  role_of_gw_admin public.organization_role;
+  role_of_gw_manager public.organization_role;
+begin
+  select c.id into cfg_a
+  from public.ai_provider_configs c
+  where c.organization_id = org_a and c.provider = 'anthropic';
+
+  select c.id into cfg_b
+  from public.ai_provider_configs c
+  where c.organization_id = org_b and c.provider = 'openai';
+
+  perform pg_catalog.set_config('rls_test.gw_a', coalesce(cfg_a::text, ''), false);
+  perform pg_catalog.set_config('rls_test.gw_b', coalesce(cfg_b::text, ''), false);
+
+  select m.role into role_of_gw_admin
+  from public.organization_members m
+  where m.organization_id = org_a
+    and m.user_id = '11111111-1111-4111-a111-111111111a01';
+
+  select m.role into role_of_gw_manager
+  from public.organization_members m
+  where m.organization_id = org_a
+    and m.user_id = '11111111-1111-4111-a111-111111111a02';
+
+  perform public.rls_test_assert(cfg_a is not null,
+    '18.0 Section 17 left an organization A configuration for this section to use');
+  perform public.rls_test_assert(cfg_b is not null,
+    '18.0 Section 17 left an organization B configuration for this section to use');
+  perform public.rls_test_assert(
+    (select secret_reference is null from public.ai_provider_configs where id = cfg_a),
+    '18.0 The organization A configuration starts with no credential');
+  perform public.rls_test_assert(role_of_gw_admin = 'admin',
+    '18.0 The gateway admin fixture is an admin of organization A');
+  perform public.rls_test_assert(role_of_gw_manager = 'manager',
+    '18.0 The gateway manager fixture is a manager of organization A');
+  perform public.rls_test_assert(
+    (select role from public.organization_members
+      where organization_id = org_a and user_id = public.rls_test_uid('a_admin')
+    ) = 'manager',
+    '18.0 a_admin is still a manager, so 18.14 does not silently test the admin path'
+  );
+end;
+$$;
+
+-- Privilege facts. Read as the owner so has_table_privilege and the catalogs
+-- answer for every role rather than only the current one.
+do $$
+begin
+  perform public.rls_test_assert(
+    not has_table_privilege('service_role', 'public.ai_provider_configs', 'SELECT'),
+    '18.1 The service role has no SELECT on ai_provider_configs'
+  );
+  perform public.rls_test_assert(
+    not has_table_privilege('service_role', 'public.ai_provider_configs', 'INSERT'),
+    '18.2 The service role has no INSERT on ai_provider_configs'
+  );
+  perform public.rls_test_assert(
+    not has_table_privilege('service_role', 'public.ai_provider_configs', 'UPDATE'),
+    '18.3 The service role has no UPDATE on ai_provider_configs'
+  );
+  perform public.rls_test_assert(
+    not has_table_privilege('service_role', 'public.ai_provider_configs', 'DELETE'),
+    '18.4 The service role has no DELETE on ai_provider_configs'
+  );
+  perform public.rls_test_assert(
+    (select rolbypassrls from pg_roles where rolname = 'service_role'),
+    '18.5 The service role does bypass RLS, so 18.1 is about privileges and not a false assumption'
+  );
+  perform public.rls_test_assert(
+    not has_table_privilege('anon', 'vault.decrypted_secrets', 'SELECT'),
+    '18.6 anon has no SELECT on the view that returns vault plaintext'
+  );
+end;
+$$;
+
+-- Function-level grants. The migration revokes from `public` and grants to
+-- `service_role` alone, so the set of roles that can reach plaintext is exactly
+-- one. Fully qualified signatures are used because the assertion depends on the
+-- exact argument list, not on a name that could match an overload.
+do $$
+declare
+  fn text;
+  no_authenticated_grant boolean;
+  no_anon_grant boolean;
+  service_grant boolean;
+begin
+  foreach fn in array array[
+    'public.ai_gateway_resolve_config(uuid,uuid,public.organization_role)',
+    'public.ai_gateway_read_config(uuid,uuid)',
+    'public.ai_gateway_read_credential(uuid,uuid)',
+    'public.ai_gateway_store_credential(uuid,uuid,text)',
+    'public.ai_gateway_delete_credential(uuid,uuid)'
+  ] loop
+    select
+      not has_function_privilege('authenticated', fn, 'EXECUTE'),
+      not has_function_privilege('anon', fn, 'EXECUTE'),
+      has_function_privilege('service_role', fn, 'EXECUTE')
+    into no_authenticated_grant, no_anon_grant, service_grant;
+
+    perform public.rls_test_assert(no_authenticated_grant,
+      '18.7 authenticated cannot EXECUTE ' || fn);
+    perform public.rls_test_assert(no_anon_grant,
+      '18.8 anon cannot EXECUTE ' || fn);
+    perform public.rls_test_assert(service_grant,
+      '18.9 service_role can EXECUTE ' || fn);
+  end loop;
+end;
+$$;
+
+-- The default EXECUTE grant PostgreSQL gives every role on a new function. If
+-- this passes, every browser can call ai_gateway_read_credential, and the
+-- per-function assertions above still pass, because they name `authenticated`
+-- and `anon` rather than PUBLIC.
+do $$
+begin
+  perform public.rls_test_assert(
+    not exists (
+      select 1
+      from pg_proc f
+      join pg_namespace n on n.oid = f.pronamespace
+      cross join lateral aclexplode(f.proacl) acl
+      where n.nspname = 'public'
+        and f.proname like 'ai\_gateway\_%'
+        and acl.grantee = 0
+    ),
+    '18.10 The default PUBLIC execute grant was revoked from every ai_gateway_* function'
+  );
+end;
+$$;
+
+-- SECURITY DEFINER, or the functions could not read a table their caller cannot.
+-- And a pinned search_path, or a caller could shadow a name inside the body;
+-- `set search_path = ''` is what makes the fully qualified body safe.
+do $$
+declare
+  all_definer boolean;
+  all_pinned boolean;
+begin
+  select bool_and(f.prosecdef)
+  into all_definer
+  from pg_proc f
+  join pg_namespace n on n.oid = f.pronamespace
+  where n.nspname = 'public' and f.proname like 'ai\_gateway\_%';
+
+  perform public.rls_test_assert(all_definer,
+    '18.11 Every ai_gateway_* function is SECURITY DEFINER');
+
+  -- Read proconfig, the value CREATE stored, rather than the session GUC, which
+  -- would pass even if the function had pinned nothing. The check is semantic
+  -- rather than textual: PostgreSQL normalizes `set search_path = ''` to
+  -- `search_path=""`, so a literal comparison against either spelling is a
+  -- version-fragile way to ask "does this resolve to no schemas at all".
+  select bool_and(
+    f.proconfig is not null
+    and exists (
+      select 1
+      from unnest(f.proconfig) cfg
+      where cfg like 'search\_path=%'
+        and btrim(translate(split_part(cfg, '=', 2), chr(34) || chr(39), '')) = ''
+    )
+  )
+  into all_pinned
+  from pg_proc f
+  join pg_namespace n on n.oid = f.pronamespace
+  where n.nspname = 'public' and f.proname like 'ai\_gateway\_%';
+
+  perform public.rls_test_assert(all_pinned,
+    '18.12 Every ai_gateway_* function pins search_path to empty');
+end;
+$$;
+
+-- The metadata function must not disclose the handle. Asserted on the declared
+-- return type, because the point is that a caller cannot ask for the column even
+-- by naming it.
+do $$
+declare
+  out_params text;
+begin
+  select string_agg(p.name, ',' order by p.ordinality)
+  into out_params
+  from pg_proc f
+  join pg_namespace n on n.oid = f.pronamespace
+  cross join lateral unnest(f.proargnames, f.proargmodes)
+    with ordinality as p(name, mode, ordinality)
+  where n.nspname = 'public'
+    and f.proname = 'ai_gateway_read_config'
+    and p.mode = 't';
+
+  perform public.rls_test_assert(
+    out_params is not null and out_params not like '%secret_reference%',
+    '18.13 ai_gateway_read_config does not return secret_reference'
+  );
+end;
+$$;
+
+-- From here the suite runs as the service role, the only role the functions will
+-- answer to. p_actor_id is what carries the authorization: under service_role the
+-- JWT is the service key, so auth.uid() says nothing about who is asking.
+set local role service_role;
+set local "request.jwt.claims" =
+  '{"sub":"00000000-0000-0000-0000-000000000000","role":"service_role"}';
+
+-- 18.B Write: admin only.
+do $$
+declare
+  cfg_a uuid := nullif(current_setting('rls_test.gw_a'), '')::uuid;
+  owner_a uuid := public.rls_test_uid('a_owner');
+  admin_a uuid := '11111111-1111-4111-a111-111111111a01';
+  manager_a uuid := '11111111-1111-4111-a111-111111111a02';
+  member_a uuid := public.rls_test_uid('a_member');
+  manager_refused boolean := false;
+  member_refused boolean := false;
+  no_credential boolean := false;
+  admin_accepted boolean := false;
+begin
+  -- Storing a credential is a billing decision: a member who could do it could
+  -- point the organization's Copilot at an account that member controls.
+  begin
+    perform public.ai_gateway_store_credential(manager_a, cfg_a, 'sk-test-manager-refused');
+  exception when insufficient_privilege then
+    manager_refused := true;
+  end;
+  perform public.rls_test_assert(manager_refused,
+    '18.14 A manager may not store a credential');
+
+  begin
+    perform public.ai_gateway_store_credential(member_a, cfg_a, 'sk-test-member-refused');
+  exception when insufficient_privilege then
+    member_refused := true;
+  end;
+  perform public.rls_test_assert(member_refused,
+    '18.15 A member may not store a credential');
+
+  -- A refused store must leave no trace, or 18.15 would be satisfied by a
+  -- partially applied write. Asked through the read path rather than by selecting
+  -- the row: `service_role` has no SELECT here (18.1), so the only way it could
+  -- ever learn whether a credential exists is the function the gateway uses.
+  begin
+    perform public.ai_gateway_read_credential(member_a, cfg_a);
+  exception when no_data_found then
+    no_credential := true;
+  end;
+  perform public.rls_test_assert(no_credential,
+    '18.16 A refused store wrote nothing');
+
+  admin_accepted :=
+    public.ai_gateway_store_credential(admin_a, cfg_a, 'AIzaGATEWAYTESTKEY_0001') is not null;
+  perform public.rls_test_assert(admin_accepted,
+    '18.17 An admin may store a credential');
+
+  perform public.rls_test_assert(
+    public.ai_gateway_store_credential(owner_a, cfg_a, 'AIzaOWNERTESTKEY_0002') is not null,
+    '18.18 An owner ranks above admin and may store a credential'
+  );
+end;
+$$;
+
+-- 18.C Read: member is enough, because the Copilot exists for members. Requiring
+-- admin here would make the feature unusable for the people it is for.
+do $$
+declare
+  cfg_a uuid := nullif(current_setting('rls_test.gw_a'), '')::uuid;
+  member_value text;
+  outsider_refused boolean := false;
+  cross_tenant_refused boolean := false;
+  unknown_refused boolean := false;
+  cross_state text;
+  unknown_state text;
+begin
+  member_value := public.ai_gateway_read_credential(public.rls_test_uid('a_member'), cfg_a);
+  perform public.rls_test_assert(member_value = 'AIzaOWNERTESTKEY_0002',
+    '18.19 A member may read the credential, so the Copilot works for members');
+
+  begin
+    perform public.ai_gateway_read_credential(public.rls_test_uid('outsider'), cfg_a);
+  exception when others then
+    outsider_refused := true;
+  end;
+  perform public.rls_test_assert(outsider_refused,
+    '18.20 A non-member may not read a credential');
+
+  begin
+    perform public.ai_gateway_read_credential(public.rls_test_uid('b_owner'), cfg_a);
+  exception when others then
+    cross_tenant_refused := true;
+    cross_state := sqlstate;
+  end;
+  perform public.rls_test_assert(cross_tenant_refused,
+    '18.21 Another organization''s owner may not read this credential');
+
+  begin
+    perform public.ai_gateway_read_credential(public.rls_test_uid('a_member'), gen_random_uuid());
+  exception when others then
+    unknown_refused := true;
+    unknown_state := sqlstate;
+  end;
+  perform public.rls_test_assert(unknown_refused,
+    '18.22 An unknown configuration id is refused');
+
+  -- The oracle check. A caller able to tell 18.22 from 18.21 by SQLSTATE could
+  -- enumerate which configuration ids exist, so the two must be identical, and
+  -- both must be the authorization refusal rather than a "not found" that stands
+  -- out from it.
+  perform public.rls_test_assert(
+    cross_state is not null and cross_state = unknown_state,
+    '18.23 A cross-tenant id and an unknown id are indistinguishable (no existence oracle)'
+  );
+  perform public.rls_test_assert(cross_state = '42501',
+    '18.24 A tenancy refusal is insufficient_privilege, as designed');
+end;
+$$;
+
+-- 18.D Round trip, update-in-place, and the vault row count.
+do $$
+declare
+  cfg_a uuid := nullif(current_setting('rls_test.gw_a'), '')::uuid;
+  admin_a uuid := '11111111-1111-4111-a111-111111111a01';
+  cfg_name text := 'trackitx:ai:' || nullif(current_setting('rls_test.gw_a'), '')::uuid::text;
+  first_handle text;
+  second_handle text;
+begin
+  first_handle := public.ai_gateway_store_credential(admin_a, cfg_a, 'AIzaROUNDTRIPFIRST_01');
+  perform public.rls_test_assert(
+    public.ai_gateway_read_credential(public.rls_test_uid('a_member'), cfg_a) = 'AIzaROUNDTRIPFIRST_01',
+    '18.25 A stored credential reads back exactly as written'
+  );
+
+  second_handle := public.ai_gateway_store_credential(admin_a, cfg_a, 'AIzaROUNDTRIPSECOND_2');
+  perform public.rls_test_assert(second_handle = first_handle,
+    '18.26 Storing again reuses the vault entry instead of orphaning the first');
+  perform public.rls_test_assert(
+    (select count(*) from vault.decrypted_secrets where name = cfg_name) = 1,
+    '18.27 Repeated stores leave exactly one vault row');
+  perform public.rls_test_assert(
+    public.ai_gateway_read_credential(public.rls_test_uid('a_member'), cfg_a) = 'AIzaROUNDTRIPSECOND_2',
+    '18.28 The replacement value is what reads back'
+  );
+end;
+$$;
+
+-- Length bounds are enforced in the database as well as the client, because the
+-- client is not the only possible caller of a SECURITY DEFINER function.
+do $$
+declare
+  cfg_a uuid := nullif(current_setting('rls_test.gw_a'), '')::uuid;
+  admin_a uuid := '11111111-1111-4111-a111-111111111a01';
+  too_short boolean := false;
+  too_long boolean := false;
+begin
+  begin
+    perform public.ai_gateway_store_credential(admin_a, cfg_a, 'short');
+  exception when invalid_parameter_value then
+    too_short := true;
+  end;
+  perform public.rls_test_assert(too_short,
+    '18.29 A credential shorter than the minimum is refused');
+
+  begin
+    perform public.ai_gateway_store_credential(admin_a, cfg_a, repeat('k', 513));
+  exception when invalid_parameter_value then
+    too_long := true;
+  end;
+  perform public.rls_test_assert(too_long,
+    '18.30 A credential longer than the maximum is refused');
+end;
+$$;
+
+-- 18.E Self-heal from a malformed handle.
+--
+-- Regression test for a real defect, found while writing this section.
+-- `set_ai_provider_secret_reference` (Phase 35, service_role only) stores whatever
+-- text it is given and validates nothing, despite its comment claiming the handle
+-- is "generated by the vault, never by a client". So a non-uuid string in this
+-- column is reachable by design, not by corruption: section 17.29 writes exactly
+-- such a value, 'vault-handle-a1b2c3d4'.
+--
+-- `ai_gateway_store_credential` chose between update and create by asking
+-- `d.id = v_config.secret_reference::uuid`. Against that value the cast raises,
+-- which aborted the call before either branch ran. The consequence was worse than
+-- a failed store: the administrator could never store a working credential again,
+-- because every retry hit the same cast, and recovery required nulling the
+-- reference through a different function. The branch is now a text comparison, so
+-- a malformed handle simply fails to match and falls through to create.
+--
+-- The read path already tolerated this: its cast sits inside a block that
+-- converts any failure into a clean P0002, asserted here as well so the two
+-- paths cannot drift apart again.
+--
+-- This block switches role twice, which is unusual and deliberate. The plant and
+-- the repair both have to run as the gateway, but only the table owner can read
+-- `secret_reference` -- clients cannot either, by 17.35 -- so the one assertion
+-- that proves the malformed value was actually stored has to be asked as the
+-- owner. Asserting reachability is the point of the regression test, so it is
+-- worth the role switch rather than inferred.
+
+-- As the gateway: plant a handle that is not a uuid.
+do $$
+declare
+  cfg_a uuid := nullif(current_setting('rls_test.gw_a'), '')::uuid;
+begin
+  perform public.set_ai_provider_secret_reference(cfg_a, 'vault-handle-a1b2c3d4');
+end;
+$$;
+
+reset role;
+
+do $$
+declare
+  cfg_a uuid := nullif(current_setting('rls_test.gw_a'), '')::uuid;
+begin
+  perform public.rls_test_assert(
+    (select secret_reference from public.ai_provider_configs where id = cfg_a)
+      = 'vault-handle-a1b2c3d4',
+    '18.31 A non-uuid handle is genuinely storable, which is what makes this reachable'
+  );
+end;
+$$;
+
+set local role service_role;
+
+do $$
+declare
+  cfg_a uuid := nullif(current_setting('rls_test.gw_a'), '')::uuid;
+  admin_a uuid := '11111111-1111-4111-a111-111111111a01';
+  healed_handle text;
+  read_refused boolean := false;
+begin
+  begin
+    perform public.ai_gateway_read_credential(admin_a, cfg_a);
+  exception when no_data_found then
+    read_refused := true;
+  end;
+  perform public.rls_test_assert(read_refused,
+    '18.32 Reading through a malformed handle is refused cleanly, not with a cast error');
+
+  -- The assertion that would have failed before the fix.
+  healed_handle := public.ai_gateway_store_credential(admin_a, cfg_a, 'AIzaSELFHEALAFTERBROKEN_1');
+  perform public.rls_test_assert(healed_handle is not null,
+    '18.33 Storing over a malformed handle succeeds instead of raising');
+
+  perform public.rls_test_assert(
+    public.ai_gateway_read_credential(admin_a, cfg_a) = 'AIzaSELFHEALAFTERBROKEN_1',
+    '18.34 The credential stored over a broken handle reads back');
+
+  perform public.rls_test_assert(
+    (select count(*) from vault.decrypted_secrets
+      where decrypted_secret = 'AIzaSELFHEALAFTERBROKEN_1') = 1,
+    '18.35 Self-healing created exactly one vault row and left no stray handle row');
+end;
+$$;
+
+-- 18.F Delete: admin only, idempotent, and it must retract the verdict the old
+-- credential earned, because that verdict described a credential that no longer
+-- exists.
+--
+-- Note on what this block may ask. It runs as `service_role`, which by 18.1 has
+-- no SELECT on `ai_provider_configs` at all, so the state of a deleted credential
+-- is observed the way the gateway itself would observe it -- through the RPCs and
+-- the vault view, both of which it can reach. The client-visible columns are
+-- asserted in 18.H, as `authenticated`, which is the role that actually reads
+-- them. Writing the obvious direct `select` here fails with "permission denied
+-- for table ai_provider_configs", which is 18.1 happening in the test itself.
+do $$
+declare
+  cfg_a uuid := nullif(current_setting('rls_test.gw_a'), '')::uuid;
+  cfg_name text := 'trackitx:ai:' || nullif(current_setting('rls_test.gw_a'), '')::uuid::text;
+  admin_a uuid := '11111111-1111-4111-a111-111111111a01';
+  member_refused boolean := false;
+  read_after_delete boolean := false;
+  second_delete_raised boolean := false;
+begin
+  begin
+    perform public.ai_gateway_delete_credential(public.rls_test_uid('a_member'), cfg_a);
+  exception when insufficient_privilege then
+    member_refused := true;
+  end;
+  perform public.rls_test_assert(member_refused,
+    '18.36 A member may not delete a credential');
+
+  perform public.record_ai_connection_test(cfg_a, 'connected');
+
+  perform public.ai_gateway_delete_credential(admin_a, cfg_a);
+
+  -- Raising rather than returning NULL, so the caller cannot confuse "no key"
+  -- with an empty key it would then send to a provider.
+  begin
+    perform public.ai_gateway_read_credential(admin_a, cfg_a);
+  exception when no_data_found then
+    read_after_delete := true;
+  end;
+  perform public.rls_test_assert(read_after_delete,
+    '18.37 Reading after a delete raises rather than returning an empty credential');
+
+  perform public.rls_test_assert(
+    (select count(*) from vault.decrypted_secrets where name = cfg_name) = 0,
+    '18.38 Deleting removes the vault row');
+
+  -- A dangling reference is the situation this function exists to clean up, so a
+  -- second delete must not fail; otherwise the administrator is stuck with
+  -- credential_present = true and no way to turn it off.
+  begin
+    perform public.ai_gateway_delete_credential(admin_a, cfg_a);
+  exception when others then
+    second_delete_raised := true;
+  end;
+  perform public.rls_test_assert(not second_delete_raised,
+    '18.39 Deleting twice does not raise');
+end;
+$$;
+
+-- 18.G Organization B, to prove the delete above was scoped to A's configuration
+-- and that the membership check is keyed on the caller's organization rather than
+-- on "is this user a member of something". A check that ignored which
+-- organization would have passed 18.40 and failed 18.43.
+do $$
+declare
+  cfg_a uuid := nullif(current_setting('rls_test.gw_a'), '')::uuid;
+  cfg_b uuid := nullif(current_setting('rls_test.gw_b'), '')::uuid;
+  cfg_b_name text := 'trackitx:ai:' || nullif(current_setting('rls_test.gw_b'), '')::uuid::text;
+  a_refused boolean := false;
+  a_admin_refused boolean := false;
+begin
+  perform public.ai_gateway_store_credential(
+    public.rls_test_uid('b_owner'), cfg_b, 'sk-orgB-credential-0001');
+
+  perform public.rls_test_assert(
+    public.ai_gateway_read_credential(public.rls_test_uid('b_owner'), cfg_b) = 'sk-orgB-credential-0001',
+    '18.40 Organization B can store and read its own credential');
+  perform public.rls_test_assert(
+    (select count(*) from vault.decrypted_secrets where name = cfg_b_name) = 1,
+    '18.41 Deleting A''s credential did not touch B''s vault row');
+  perform public.rls_test_assert(
+    not exists (
+      select 1 from vault.decrypted_secrets
+      where name = 'trackitx:ai:' || nullif(current_setting('rls_test.gw_a'), '')::uuid::text
+    ),
+    '18.42 A''s vault row is still gone after B stored a credential'
+  );
+
+  -- The membership check is keyed on the configuration's organization, not on
+  -- "is this user a member of something". A check that only asked "is this actor a
+  -- member anywhere" would let a real admin of one organization read another
+  -- organization's credential, so both directions are asserted.
+  begin
+    perform public.ai_gateway_read_credential('11111111-1111-4111-a111-111111111a01', cfg_b);
+  exception when others then
+    a_admin_refused := true;
+  end;
+  perform public.rls_test_assert(a_admin_refused,
+    '18.43 An organization A admin is refused by organization B, so the check is organization-specific');
+
+  begin
+    perform public.ai_gateway_read_credential(public.rls_test_uid('b_owner'), cfg_a);
+  exception when others then
+    a_refused := true;
+  end;
+  perform public.rls_test_assert(a_refused,
+    '18.44 The same denial holds in the other direction');
+end;
+$$;
+
+reset role;
+
+-- 18.H What the client sees. Run as `authenticated`, which is the role that
+-- legitimately reads these columns, so the derived and summary state of a deleted
+-- credential is asserted from the one perspective that matters for the UI.
+set local role authenticated;
+set local "request.jwt.claims" =
+  '{"sub":"11111111-1111-4111-a111-111111111a01","role":"authenticated"}';
+
+do $$
+declare
+  cfg_a uuid := nullif(current_setting('rls_test.gw_a'), '')::uuid;
+  cfg_b uuid := nullif(current_setting('rls_test.gw_b'), '')::uuid;
+begin
+  perform public.rls_test_assert(
+    (select not credential_present from public.ai_provider_configs where id = cfg_a),
+    '18.45 Deleting clears the client-visible credential_present flag'
+  );
+  perform public.rls_test_assert(
+    (select connection_status from public.ai_provider_configs where id = cfg_a) = 'unverified',
+    '18.46 Deleting resets connection_status, so the old verdict cannot outlive the credential'
+  );
+  perform public.rls_test_assert(
+    (select last_tested_at from public.ai_provider_configs where id = cfg_a) is null,
+    '18.47 Deleting clears last_tested_at'
+  );
+  -- No assertion on `secret_reference` here: a client cannot read that column at
+  -- all, by 17.35. That is the intended split, and this role is the one place
+  -- where the absence of the column is demonstrated rather than assumed.
+  --
+  -- The acting user is an admin of organization A, so RLS hides organization B's
+  -- row entirely. That the row is invisible at all -- rather than merely
+  -- unauthorized -- is the tenancy guarantee Phase 35 established, and it is what
+  -- the gateway's own 42501 in 18.21 mirrors at the SQL layer.
+  perform public.rls_test_assert(
+    (select count(*) from public.ai_provider_configs where id = cfg_b) = 0,
+    '18.48 An organization A member sees no row at all for organization B''s configuration'
+  );
+end;
+$$;
+
+-- 18.I A caller that is not the service role is refused even when it names a real
+-- actor with real membership. This is what the service-role tests above cannot
+-- show: being a valid user is not sufficient, because the functions trust
+-- p_actor_id only after auth.role() has confirmed the caller is the gateway.
+do $$
+declare
+  cfg_a uuid := nullif(current_setting('rls_test.gw_a'), '')::uuid;
+  cfg_b uuid := nullif(current_setting('rls_test.gw_b'), '')::uuid;
+  gw_admin uuid := '11111111-1111-4111-a111-111111111a01';
+  read_refused boolean := false;
+  store_refused boolean := false;
+  delete_refused boolean := false;
+  config_refused boolean := false;
+  resolve_refused boolean := false;
+begin
+  -- gw_admin is a real admin of A. Every call below would authorize if the role
+  -- check were absent, so each refusal isolates auth.role().
+  begin
+    perform public.ai_gateway_read_credential(gw_admin, cfg_b);
+  exception when others then
+    read_refused := true;
+  end;
+  perform public.rls_test_assert(read_refused,
+    '18.50 authenticated cannot reach ai_gateway_read_credential even as a real admin');
+
+  begin
+    perform public.ai_gateway_store_credential(gw_admin, cfg_a, 'sk-authenticated-should-not-store');
+  exception when others then
+    store_refused := true;
+  end;
+  perform public.rls_test_assert(store_refused,
+    '18.51 authenticated cannot reach ai_gateway_store_credential even as a real admin');
+
+  begin
+    perform public.ai_gateway_delete_credential(gw_admin, cfg_b);
+  exception when others then
+    delete_refused := true;
+  end;
+  perform public.rls_test_assert(delete_refused,
+    '18.52 authenticated cannot reach ai_gateway_delete_credential even as a real admin');
+
+  begin
+    perform public.ai_gateway_read_config(gw_admin, cfg_a);
+  exception when others then
+    config_refused := true;
+  end;
+  perform public.rls_test_assert(config_refused,
+    '18.53 authenticated cannot reach ai_gateway_read_config even as a real admin');
+
+  begin
+    perform public.ai_gateway_resolve_config(gw_admin, cfg_b, 'member');
+  exception when others then
+    resolve_refused := true;
+  end;
+  perform public.rls_test_assert(resolve_refused,
+    '18.54 authenticated cannot reach ai_gateway_resolve_config even as a real admin');
+
+  -- Nothing was written by any of those attempts. Only organization A is
+  -- observable from this role -- 18.48 established that B's row is invisible --
+  -- so the check is made against A, where the refused store would have landed.
+  perform public.rls_test_assert(
+    (select not credential_present from public.ai_provider_configs where id = cfg_a),
+    '18.55 A refused store did not create a credential for organization A'
+  );
+  -- No vault assertion belongs here: `authenticated` has no SELECT on the vault
+  -- view (18.6), and 18.51 plus 18.55 already show the store was never reached.
+end;
+$$;
+
+-- 18.J The orphan case, which is what forced the store to key off the name.
+--
+-- Regression test for a second real defect, found by running 18.E rather than by
+-- reading it. `vault.secrets` has a unique index on `name`, and the store function
+-- derived the name deterministically from the configuration id while deciding
+-- between update and create by looking up `secret_reference::uuid`. So whenever
+-- the reference was null or dangling but the vault row survived, the lookup found
+-- nothing, the create branch ran, and `vault.create_secret` failed on the unique
+-- name with a duplicate-key error the administrator could do nothing about.
+--
+-- The state is reachable: `set_ai_provider_secret_reference(config, null)` is
+-- granted to `service_role` and clears the reference without touching the vault,
+-- and `ai_gateway_delete_credential` clears it whenever its vault delete fails for
+-- any reason. Both leave exactly this orphan.
+--
+-- The store now finds the row by name, so an orphan is reused rather than
+-- duplicated. Asserted on the handle being unchanged, which is the observable
+-- difference between reusing a row and creating a second one.
+set local role service_role;
+-- 18.H reset the claims to an authenticated user, and `auth.role()` reads the
+-- claims rather than the current role, so they have to be restored. Without this
+-- the first call below is refused with "Only the AI Gateway may use this
+-- function" -- which is the guard working, not a broken fixture.
+set local "request.jwt.claims" =
+  '{"sub":"00000000-0000-0000-0000-000000000000","role":"service_role"}';
+
+do $$
+declare
+  cfg_b uuid := nullif(current_setting('rls_test.gw_b'), '')::uuid;
+  cfg_b_name text := 'trackitx:ai:' || nullif(current_setting('rls_test.gw_b'), '')::uuid::text;
+  owner_b uuid := public.rls_test_uid('b_owner');
+  original_handle text;
+  reused_handle text;
+  read_refused boolean := false;
+begin
+  original_handle := public.ai_gateway_store_credential(owner_b, cfg_b, 'sk-orphan-baseline-0001');
+
+  -- Clear the reference but leave the vault row behind: the orphan.
+  perform public.set_ai_provider_secret_reference(cfg_b, null);
+
+  perform public.rls_test_assert(
+    (select count(*) from vault.decrypted_secrets where name = cfg_b_name) = 1,
+    '18.57 Clearing the reference left the vault row behind, so the state is an orphan'
+  );
+
+  begin
+    perform public.ai_gateway_read_credential(owner_b, cfg_b);
+  exception when no_data_found then
+    read_refused := true;
+  end;
+  perform public.rls_test_assert(read_refused,
+    '18.58 An orphaned credential is not readable, because nothing points at it');
+
+  -- This call is what raised a duplicate-key error before the fix.
+  reused_handle := public.ai_gateway_store_credential(owner_b, cfg_b, 'sk-orphan-recovered-01');
+
+  perform public.rls_test_assert(reused_handle is not null,
+    '18.59 Storing over an orphan succeeds instead of raising a duplicate-key error');
+  perform public.rls_test_assert(reused_handle = original_handle,
+    '18.60 The orphaned row was reused, not duplicated');
+  perform public.rls_test_assert(
+    (select count(*) from vault.decrypted_secrets where name = cfg_b_name) = 1,
+    '18.61 Recovery left exactly one vault row'
+  );
+  perform public.rls_test_assert(
+    public.ai_gateway_read_credential(owner_b, cfg_b) = 'sk-orphan-recovered-01',
+    '18.62 The recovered credential reads back');
+end;
+$$;
+
+reset role;
+
+-- 18.6 -- ai_gateway_role_of
+--
+-- Added after the gateway was run against a local runtime. Every
+-- configuration-authorized operation answered 401 while the SQL, the keys and the
+-- membership rows were all correct, because the Edge Function read the caller's
+-- role through the app's `organization_role_of`, which resolves its actor from
+-- `auth.uid()`. A `service_role` JWT carries no `sub`, so `auth.uid()` is NULL and
+-- that function returned NULL for every call -- including for an owner acting on
+-- their own organization. No grant could have fixed it; the function answers "what
+-- is my own role" and the gateway was never asking about "self".
+--
+-- These assertions pin the replacement's contract, and pin the reason it exists:
+-- the actor is an argument.
+do $$
+declare
+  v_actor_a uuid;
+  v_actor_b uuid;
+  v_org_a   uuid;
+  v_org_b   uuid;
+begin
+  select user_id into v_actor_a from public.organization_members
+   where role = 'owner' order by user_id limit 1;
+  select user_id into v_actor_b from public.organization_members
+   where role = 'owner' order by user_id desc limit 1;
+  select organization_id into v_org_a from public.organization_members
+   where user_id = v_actor_a limit 1;
+  select organization_id into v_org_b from public.organization_members
+   where user_id = v_actor_b and organization_id <> v_org_a limit 1;
+
+  -- 18.63 The actor is an argument, so a service-role caller gets a real answer.
+  perform public.rls_test_assert(
+    public.ai_gateway_role_of(v_actor_a, v_org_a) is not null,
+    '18.63 A membership is reported for an explicit actor and organization');
+
+  -- 18.64 The role is the membership's role, not a default.
+  perform public.rls_test_assert(
+    public.ai_gateway_role_of(v_actor_a, v_org_a) = 'owner',
+    '18.64 The reported role is the membership''s actual role');
+
+  -- 18.65 No membership is NULL, and NULL is a refusal at the call site rather
+  -- than a silent downgrade to `member`.
+  perform public.rls_test_assert(
+    public.ai_gateway_role_of(v_actor_a, v_org_b) is null,
+    '18.65 An actor with no membership in that organization gets NULL');
+  perform public.rls_test_assert(
+    public.ai_gateway_role_of(
+      '00000000-0000-4000-8000-00000000beef', v_org_a) is null,
+    '18.66 A user id that is not a member anywhere gets NULL');
+
+  -- 18.67 Organization isolation: the same actor legitimately present in one
+  -- organization is absent from another. If this ever returned a role, the
+  -- function would be a cross-tenant membership oracle.
+  perform public.rls_test_assert(
+    (select count(distinct m.organization_id)
+       from public.organization_members m
+      where m.user_id = v_actor_b) >= 1,
+    '18.67 The fixture actor belongs to at least one organization');
+  perform public.rls_test_assert(
+    public.ai_gateway_role_of(v_actor_b, v_org_b) is not null,
+    '18.68 The actor is reported inside their own organization');
+
+  -- 18.69 The whole point of the replacement: an explicit actor works where an
+  -- auth-context lookup cannot. `organization_role_of` resolves from
+  -- `auth.uid()`, which is NULL in this session, so it returns NULL for an owner
+  -- acting on their own organization. That is the bug, asserted as present, so a
+  -- future refactor that goes back to it fails here instead of in production.
+  perform public.rls_test_assert(
+    public.organization_role_of(v_org_a) is null,
+    '18.69 The app helper returns NULL for a service-role caller, which is why it is unusable here');
+  perform public.rls_test_assert(
+    public.ai_gateway_role_of(v_actor_a, v_org_a) is not null,
+    '18.70 The gateway RPC answers the same question from an explicit actor');
+end;
+$$;
+
+reset role;
+
+-- 18.7 -- ai_gateway_role_of is not callable by a client
+--
+-- A membership lookup is a small disclosure on its own, but it is the input to
+-- every rank decision the gateway makes. It must not be reachable with a user
+-- JWT, or anyone could enumerate who belongs to a competitor's organization.
+do $$
+begin
+  perform public.rls_test_assert(
+    not has_function_privilege('anon', 'public.ai_gateway_role_of(uuid, uuid)', 'EXECUTE'),
+    '18.71 anon cannot read organization roles through the gateway');
+  perform public.rls_test_assert(
+    not has_function_privilege('authenticated', 'public.ai_gateway_role_of(uuid, uuid)', 'EXECUTE'),
+    '18.72 authenticated cannot read organization roles through the gateway');
+  perform public.rls_test_assert(
+    has_function_privilege('service_role', 'public.ai_gateway_role_of(uuid, uuid)', 'EXECUTE'),
+    '18.73 service_role can, which is the only caller that needs it');
 end;
 $$;
 

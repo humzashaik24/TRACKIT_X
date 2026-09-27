@@ -52,6 +52,22 @@ export type AppErrorCode =
   | 'AI_OUTPUT_INVALID'
   | 'AI_ACTION_NOT_PERMITTED'
   | 'AI_BUDGET_EXCEEDED'
+  // AI gateway (Phase 36)
+  //
+  // These are the codes the AI Gateway returns to the client. They are separate
+  // from the four above because the gateway fails for reasons the client has no
+  // other vocabulary for: the organization's provider is switched off, the model
+  // asked for does not exist, the provider rejected the stored key. A screen
+  // branches on the code, so a provider failure has to arrive as a code rather
+  // than as a message, and a code a screen can act on.
+  | 'AI_PROVIDER_NOT_CONFIGURED'
+  | 'AI_PROVIDER_DISABLED'
+  | 'AI_MODEL_NOT_SUPPORTED'
+  | 'AI_PROVIDER_AUTH_FAILED'
+  | 'AI_PROVIDER_RATE_LIMITED'
+  | 'AI_PROVIDER_UNAVAILABLE'
+  | 'AI_REQUEST_INVALID'
+  | 'AI_UNAUTHORIZED'
   // Fallback
   | 'UNKNOWN';
 
@@ -164,6 +180,50 @@ const profiles: Record<AppErrorCode, CodeProfile> = {
   },
   AI_BUDGET_EXCEEDED: {
     userMessage: 'The assistant has reached its usage limit for now.',
+    retryable: false,
+  },
+
+  // ── AI gateway ──────────────────────────────────────────────────────────────
+  // Every one of these is written so that it tells an administrator what to DO,
+  // and none of them can be satisfied by showing the user a provider's raw
+  // response. The provider's own error body is the single most likely place for
+  // a fragment of the submitted key to reappear, so it never reaches this table —
+  // see `mapProviderFailure` in `src/domain/ai/providerErrors.ts`.
+  AI_PROVIDER_NOT_CONFIGURED: {
+    userMessage: 'No AI provider is set up for your organization yet.',
+    retryable: false,
+  },
+  AI_PROVIDER_DISABLED: {
+    userMessage: 'That AI provider is switched off. Ask an administrator to turn it on.',
+    retryable: false,
+  },
+  AI_MODEL_NOT_SUPPORTED: {
+    userMessage: 'That AI model is not available for the selected provider.',
+    retryable: false,
+  },
+  AI_PROVIDER_AUTH_FAILED: {
+    // Deliberately does not say whether the key was missing, wrong, or revoked.
+    // The credential is the operator's to fix, and the difference between those
+    // three is not information a user of the Copilot needs.
+    userMessage: 'The AI provider rejected its stored API key. Ask an administrator to check it.',
+    retryable: false,
+  },
+  AI_PROVIDER_RATE_LIMITED: {
+    userMessage: 'The AI provider is busy right now. Please try again in a moment.',
+    retryable: true,
+  },
+  AI_PROVIDER_UNAVAILABLE: {
+    userMessage: 'The AI provider could not be reached. Please try again shortly.',
+    retryable: true,
+  },
+  AI_REQUEST_INVALID: {
+    userMessage: 'That request could not be understood.',
+    retryable: false,
+  },
+  AI_UNAUTHORIZED: {
+    // Used by the gateway, not the client. A user who reaches this has a valid
+    // session but no right to the organization or the provider they asked for.
+    userMessage: 'You do not have permission to use the AI assistant for this organization.',
     retryable: false,
   },
 

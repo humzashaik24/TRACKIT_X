@@ -19,7 +19,7 @@
  */
 import type { DashboardSnapshot } from '@/features/dashboard/metrics';
 import type { OrganizationRole } from '@/domain/organization';
-import type { AIRequest } from './types';
+import type { AIRequest } from './types.ts';
 
 /**
  * What the Copilot is allowed to know about an organization.
@@ -114,15 +114,9 @@ export function buildCopilotRequest(params: {
 /**
  * The system instructions a Copilot request should carry.
  *
- * Written as a constant so the same rules apply to every question, and kept
- * short because long instructions cost tokens on every call. It states the two
- * constraints that matter most: reason only over the supplied context, and say so
- * when the context does not contain the answer.
+ * Defined in `./systemInstructions.ts` and re-exported here, because the AI
+ * Gateway must send the same words to a provider and runs on Deno, which cannot
+ * load this module's imports. The single copy of the text lives with no
+ * dependencies; this re-export keeps every existing client import working.
  */
-export const COPILOT_SYSTEM_INSTRUCTIONS = [
-  'You are the Trackit X Copilot, assisting a small business with its people, projects and tasks.',
-  'Answer only from the business context supplied with this request.',
-  'If the context does not contain enough information to answer, say so plainly and name what is missing.',
-  'A null figure means the viewer was not permitted to see it. Never describe it as zero.',
-  'Do not speculate about individuals, and do not disclose credentials, tokens or provider configuration.',
-].join(' ');
+export { COPILOT_SYSTEM_INSTRUCTIONS } from './systemInstructions.ts';

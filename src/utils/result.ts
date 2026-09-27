@@ -14,7 +14,7 @@
  * Throwing is still correct for programmer error — a missing provider, an
  * impossible branch. Those are bugs to fix, not conditions to render.
  */
-import { toAppError, type AppError, type AppErrorCode } from './errors';
+import { toAppError, type AppError, type AppErrorCode } from './errors.ts';
 
 export interface Ok<T> {
   readonly ok: true;

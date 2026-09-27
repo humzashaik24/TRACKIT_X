@@ -253,10 +253,23 @@ export function useAIProviderConfigs(): UseAIProviderConfigsResult {
     async (provider: AIProviderId, credential: string): Promise<boolean> => {
       if (organizationId === null || !canManage) return false;
 
+      // The gateway takes a `configId`, not an organization and a provider, so
+      // the configuration is resolved here the same way `test` resolves it. The
+      // hook's own signature still speaks in providers, so no screen changes.
+      const target = configs.find((config) => config.provider === provider);
+      if (target === undefined) {
+        setActionError(
+          appError('VALIDATION_FAILED', `No ${provider} configuration exists to store a key on.`, {
+            userMessage: 'Add that AI provider before saving a key for it.',
+            context: { provider },
+          }),
+        );
+        return false;
+      }
+
       setActionError(null);
       const result = await submitProviderCredential({
-        organizationId,
-        provider,
+        configId: target.id,
         credential,
       });
       if (!result.ok) {
@@ -266,7 +279,7 @@ export function useAIProviderConfigs(): UseAIProviderConfigsResult {
       await loadConfigs();
       return true;
     },
-    [canManage, loadConfigs, organizationId],
+    [canManage, configs, loadConfigs, organizationId],
   );
 
   return {

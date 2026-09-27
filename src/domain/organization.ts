@@ -19,61 +19,36 @@
  *
  * If this file and the migration ever disagree, the migration is right.
  */
-import type { BusinessType, OrganizationRole } from '@/types/database';
+import type { BusinessType } from '@/types/database.ts';
+
+import {
+  hasAtLeastRole,
+  roleRank,
+  ORGANIZATION_ROLES,
+  ROLE_DESCRIPTIONS,
+  ROLE_LABELS,
+  type OrganizationRole,
+} from './roles.ts';
 
 /**
  * Re-exported so a screen that imports `businessTypeOptions` or `ROLE_LABELS` does
  * not also have to reach into `@/types/database` for the type those values are keyed
- * by. The declarations stay in the schema-mirroring module — this is an alias, not a
- * second definition, so the two cannot drift.
+ * by, and so that every existing import of the role ladder from this module keeps
+ * working.
+ *
+ * The ladder itself is defined in `./roles.ts` rather than here, because the AI
+ * Gateway needs `hasAtLeastRole` and runs on Deno, and a module that only reaches
+ * the schema types through an `import type` cannot be loaded there. This is an
+ * alias, not a second definition, so the two cannot drift. See `roles.ts`.
  */
 export type { BusinessType, OrganizationRole };
-
-/**
- * Every role, ascending by authority.
- *
- * The order is load-bearing: `roleRank` is the 1-based index, which is exactly
- * what `public.organization_role_rank()` returns. Reordering this array silently
- * changes the meaning of every comparison, so it is asserted in the unit tests.
- */
-export const ORGANIZATION_ROLES = ['member', 'manager', 'admin', 'owner'] as const;
-
-export const ROLE_LABELS: Record<OrganizationRole, string> = {
-  owner: 'Owner',
-  admin: 'Admin',
-  manager: 'Manager',
-  member: 'Member',
+export {
+  hasAtLeastRole,
+  roleRank,
+  ORGANIZATION_ROLES,
+  ROLE_DESCRIPTIONS,
+  ROLE_LABELS,
 };
-
-/**
- * What each role means in practice. Shown when assigning a role, because
- * "Manager" alone does not tell an owner what they are handing over.
- */
-export const ROLE_DESCRIPTIONS: Record<OrganizationRole, string> = {
-  owner: 'Full control, including billing and closing the business account.',
-  admin: 'Runs the whole business day to day. Cannot close the account.',
-  manager: 'Runs their own area — assigns work and approves within limits.',
-  member: 'Records their own work and sees what they need to do it.',
-};
-
-/**
- * Numeric authority. Mirrors `public.organization_role_rank()`.
- *
- * `null` means "not a member", which ranks below every role rather than throwing:
- * callers overwhelmingly want "can this person do X", and a non-member cannot.
- */
-export function roleRank(role: OrganizationRole | null | undefined): number {
-  if (role === null || role === undefined) return 0;
-  return ORGANIZATION_ROLES.indexOf(role) + 1;
-}
-
-/** Whether `actual` carries at least the authority of `minimum`. */
-export function hasAtLeastRole(
-  actual: OrganizationRole | null | undefined,
-  minimum: OrganizationRole,
-): boolean {
-  return roleRank(actual) >= roleRank(minimum);
-}
 
 /** Renames the organization, changes its currency, timezone or sector. */
 export function canEditOrganization(role: OrganizationRole | null | undefined): boolean {

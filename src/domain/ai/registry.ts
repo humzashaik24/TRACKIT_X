@@ -25,7 +25,7 @@
  * the Settings screen, the service layer and the gateway all read provider data
  * from here rather than switching on provider ids.
  */
-import type { AIModelDefinition, AIProviderDefinition, AIProviderId } from './types';
+import type { AIModelDefinition, AIProviderDefinition, AIProviderId } from './types.ts';
 
 /** ISO date the entries below were last checked against provider documentation. */
 export const MODEL_REGISTRY_VERIFIED_ON = '2026-09-27';

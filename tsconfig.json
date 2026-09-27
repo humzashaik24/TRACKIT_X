@@ -10,14 +10,14 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
     "types": ["jest", "node"],
     "paths": {
       "@/*": ["./src/*"],
       "@/assets/*": ["./assets/*"],
       "@@/*": ["./*"]
     }
-  },
-  "include": [
+  },  "include": [
     "app/**/*.ts",
     "app/**/*.tsx",
     "src/**/*.ts",

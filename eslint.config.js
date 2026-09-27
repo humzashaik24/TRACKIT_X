@@ -14,8 +14,18 @@ module.exports = defineConfig([
       'coverage/*',
       'supabase/.branches/*',
       'supabase/.temp/*',
-      // Edge Functions are Deno-targeted and type-checked by the Supabase CLI.
-      'supabase/functions/*',
+      // NOTE: `supabase/functions` is deliberately NOT ignored.
+      //
+      // It used to be, on the grounds that Edge Functions are Deno-targeted and
+      // "type-checked by the Supabase CLI". Both halves of that are wrong now.
+      // The CLI does not type-check function code — it serves it — so nothing was
+      // checking it; `tsconfig.json` excludes it too. The result was that the most
+      // security-sensitive code in the repository (the AI Gateway, which is the
+      // only place a provider credential is ever readable) was the only code with
+      // no lint and no type check.
+      //
+      // It is now covered by `tsconfig.edge.json` and linted by the shared config
+      // below, with Deno's globals declared in the function's own `deno.d.ts`.
     ],
   },
   {
@@ -35,6 +45,24 @@ module.exports = defineConfig([
       'no-console': ['error', { allow: ['warn', 'error'] }],
       'prefer-const': 'error',
       'object-shorthand': ['error', 'properties'],
+    },
+  },
+  {
+    // Supabase Edge Functions.
+    //
+    // `no-console` allows only warn/error for the app, because a stray log in the
+    // Expo bundle is noise in a user's own console. An Edge Function is the
+    // opposite case: the platform captures its stdout and surfaces it as the
+    // function's logs, so `console.log` IS the log sink, and refusing it would
+    // leave the function unobservable in production.
+    //
+    // The relaxation is scoped to this directory and to the levels the function
+    // actually uses; it is not a general opt-out. `logGateway` in `http.ts`
+    // remains the only place in the function that calls console at all, which is
+    // what keeps "no secrets in logs" reviewable in one file.
+    files: ['supabase/functions/**/*.ts'],
+    rules: {
+      'no-console': ['error', { allow: ['warn', 'error', 'log'] }],
     },
   },
   {

@@ -20,9 +20,9 @@
  * The route below is therefore a declaration of intent: the client POSTs the
  * *config id*, never a key, and the server looks the key up in the vault.
  */
-import type { AIModelDefinition, AIProviderConfig, AIProviderId, AIRequest, AIResponse } from './types';
-import { err, type ActionResult } from '@/utils/result';
-import { appError } from '@/utils/errors';
+import type { AIModelDefinition, AIProviderConfig, AIProviderId, AIRequest, AIResponse } from './types.ts';
+import { err, type ActionResult } from '@/utils/result.ts';
+import { appError } from '@/utils/errors.ts';
 
 declare const secretMaterialBrand: unique symbol;
 
@@ -169,9 +169,17 @@ export const unavailableGateway: AIGateway = {
 /**
  * Asserts that a configuration is one the gateway would actually serve.
  *
- * Called on the client for immediate feedback, and again on the server for the
- * decision that counts. Two implementations of the same rule is not redundancy
- * here — the client copy is a courtesy, the server copy is the control.
+ * A client-side courtesy check, for immediate feedback before a request is sent.
+ * It is NOT the control. The Edge Function does not call this — it authorizes
+ * through the SQL RPC, reads `credential_present` from the same read, and
+ * returns `AI_PROVIDER_DISABLED` or `AI_PROVIDER_NOT_CONFIGURED` itself. An
+ * earlier version of this comment claimed the rule was also applied "on the
+ * server for the decision that counts"; that was never true of this function, and
+ * it is worth stating plainly because a rule that only the client enforces is
+ * worth exactly nothing against a crafted request.
+ *
+ * Keep the two in agreement, and expect the server's answer to be the one that
+ * counts.
  */
 export function assertGatewayEligible(config: AIProviderConfig): ActionResult<AIProviderConfig> {
   if (!config.enabled) {
