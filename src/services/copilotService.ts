@@ -54,6 +54,12 @@ import { buildDashboardSnapshot, type DashboardSnapshot } from '@/features/dashb
 import { generate as generateThroughGateway } from './aiGatewayService';
 import { listProviderConfigs } from './aiProviderService';
 import {
+  DEMO_HEADCOUNT,
+  isDemoDataMode,
+  isDemoOrganization,
+  readDemoFacts,
+} from './demoDataService';
+import {
   DASHBOARD_EMPLOYEE_COLUMNS,
   DASHBOARD_PROJECT_COLUMNS,
   DASHBOARD_TASK_COLUMNS,
@@ -124,6 +130,27 @@ export interface CopilotFacts {
 const COPILOT_TASK_COLUMNS = `id, title, ${DASHBOARD_TASK_COLUMNS}, project_id`;
 
 /**
+ * The `organization_members` count the snapshot annotates itself with.
+ *
+ * In demo mode this is a constant from the fixture rather than a query. That is
+ * deliberate on two counts: the fixture describes a headcount of seven access holders
+ * who do not exist, so querying for them would return zero and the snapshot would
+ * annotate a business of five people with "0 access holders" — a wrong number, printed
+ * confidently, about a dataset that is otherwise entirely correct. And a demo mode that
+ * still required a live `organization_members` table would not really be one.
+ *
+ * Keyed on the organization, like the fact read, so a demo build pointed at a real
+ * tenant counts that tenant's members for real. An error is swallowed into `null`
+ * because this figure only annotates: the snapshot is built and the Copilot answers
+ * either way, which is the behaviour Phase 34 settled on and is not changed here.
+ */
+async function readAccessHolders(organizationId: string): Promise<number | null> {
+  if (isDemoDataMode() && isDemoOrganization(organizationId)) return DEMO_HEADCOUNT;
+  const members = await countOrganizationMembers(organizationId);
+  return members.ok ? members.value : null;
+}
+
+/**
  * Reads the visible facts for one organization.
  *
  * Three independent reads, issued together, exactly as `readDashboardFacts` does —
@@ -139,10 +166,47 @@ const COPILOT_TASK_COLUMNS = `id, title, ${DASHBOARD_TASK_COLUMNS}, project_id`;
  * three tables to the caller's organization, so a request for another tenant returns
  * zero rows rather than their contents; the explicit filter is kept so a single
  * careless edit cannot be sufficient to leak.
+ *
+ * ── Phase 38: the demo substitution, and exactly where it stops ───────────────
+ * In demo mode this function returns the fixed fixture set from
+ * `demoDataService` instead of querying Postgres, and that is the ONLY difference
+ * Phase 38 makes. Everything downstream of this line — `buildDashboardSnapshot`,
+ * `buildCopilotContext`, the gateway call, the provider, the normalizer — is
+ * unchanged, so a demo turn and a production turn are the same computation over
+ * different rows.
+ *
+ * Two properties are worth stating because the temptation to relax them is exactly
+ * what would make demo mode a security hole:
+ *
+ *   · It is keyed on the ORGANIZATION, not on the flag alone. `readDemoFacts` only
+ *     answers for `DEMO_ORGANIZATION_ID`; every other id falls through to the real
+ *     organization-scoped reads below. So a build running in demo mode still cannot
+ *     show fixture data for a tenant, and the fallback is a normal read rather than a
+ *     refusal.
+ *   · It substitutes data, never authorization. There is no membership check here to
+ *     skip, because the fixture set describes an organization that does not exist and
+ *     the records are a public constant in the bundle. The real reads still run
+ *     `.eq('organization_id', …)` and RLS still applies to them; demo mode never
+ *     reaches a table at all.
+ *
+ * `asOf` is a new parameter rather than being read from the clock, because the fixture
+ * stores due dates as offsets and something has to resolve them. Passing in the same
+ * `asOf` the snapshot is built with is what keeps the dataset deterministic: the same
+ * reference date always yields the same overdue set, on any machine, on any day.
  */
 export async function readCopilotFacts(
   organizationId: string,
+  asOf: string,
 ): Promise<ActionResult<CopilotFacts>> {
+  if (isDemoDataMode()) {
+    const demo = readDemoFacts(organizationId, asOf);
+    // A bad `asOf` is a real error and is returned as one.
+    if (!demo.ok) return demo;
+    // `null` means "not the demo organization", which is not an error — it is the
+    // signal to fall through to the real reads below.
+    if (demo.value !== null) return ok(demo.value);
+  }
+
   const result = await attempt(async () => {
     const [employees, projects, tasks] = await Promise.all([
       supabase.from('employees').select(DASHBOARD_EMPLOYEE_COLUMNS).eq('organization_id', organizationId),
@@ -307,10 +371,14 @@ export async function askCopilot(
   if (!target.ok) return target;
 
   // The two reads go out together, and the member count is allowed to fail on its own
-  // because it annotates a headcount rather than producing one.
-  const [facts, members] = await Promise.all([
-    readCopilotFacts(request.organizationId),
-    countOrganizationMembers(request.organizationId),
+  // because it annotates a headcount rather than producing one. `options.asOf` is
+  // passed to the fact read as well as to the snapshot builder: in demo mode it is
+  // what resolves the fixture's due-date offsets, and using the same value in both
+  // places is what guarantees the overdue count the model is told about is the
+  // overdue count the snapshot computed.
+  const [facts, accessHolders] = await Promise.all([
+    readCopilotFacts(request.organizationId, options.asOf),
+    readAccessHolders(request.organizationId),
   ]);
   if (!facts.ok) return facts;
 
@@ -324,7 +392,7 @@ export async function askCopilot(
     organizationId: request.organizationId,
     asOf: options.asOf,
     role: request.viewerRole,
-    accessHolders: members.ok ? members.value : null,
+    accessHolders,
   });
 
   // A snapshot stamped with a different tenant than the question would be a bug worth

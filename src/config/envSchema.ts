@@ -19,9 +19,20 @@ import { z } from 'zod';
 
 export type AppEnvironment = 'development' | 'staging' | 'production';
 
+/**
+ * Where the application's business records come from.
+ *
+ * `live` reads Postgres. `demo` reads the fixed fixture set in `src/domain/demo`,
+ * which is a Phase 38 development convenience. The AI half of the application is
+ * identical in both modes — same gateway, same adapter, same provider — so this
+ * switch decides where a *task* comes from and never whether an *answer* is real.
+ */
+export type DataMode = 'live' | 'demo';
+
 /** The client-safe configuration keys, in the shape the app consumes them. */
 export type ClientEnvKey =
   | 'appEnv'
+  | 'dataMode'
   | 'supabaseUrl'
   | 'supabasePublishableKey'
   | 'debugLogging';
@@ -29,6 +40,7 @@ export type ClientEnvKey =
 /** Maps an internal key back to the variable a developer must actually set. */
 export const variableNames: Record<ClientEnvKey, string> = {
   appEnv: 'EXPO_PUBLIC_APP_ENV',
+  dataMode: 'EXPO_PUBLIC_DATA_MODE',
   supabaseUrl: 'EXPO_PUBLIC_SUPABASE_URL',
   supabasePublishableKey: 'EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY',
   debugLogging: 'EXPO_PUBLIC_DEBUG_LOGGING',
@@ -59,6 +71,14 @@ export const clientEnvSchema = z.object({
     z.enum(['development', 'staging', 'production']).default('development'),
   ),
 
+  /*
+   * Optional, because "unset" is a meaningful value rather than a missing one: it
+   * means demo in development and live everywhere else, which `effectiveDataMode`
+   * below decides. A `.default()` here would collapse those two cases into one and
+   * make the development default impossible to express without a variable.
+   */
+  dataMode: z.preprocess(blankToUndefined, z.enum(['live', 'demo']).optional()),
+
   supabaseUrl: z.preprocess(
     blankToUndefined,
     z
@@ -83,6 +103,11 @@ export type ParsedClientEnv = z.output<typeof clientEnvSchema>;
 
 export interface ClientEnv {
   readonly appEnv: AppEnvironment;
+  /**
+   * The effective mode, after the production lockout below. Never `demo` when
+   * `appEnv` is `production`, whatever the variable said.
+   */
+  readonly dataMode: DataMode;
   readonly supabaseUrl: string;
   /** Anon/publishable key. Public by design; RLS is the actual boundary. */
   readonly supabasePublishableKey: string;
@@ -90,6 +115,36 @@ export interface ClientEnv {
   readonly isDevelopment: boolean;
   readonly isStaging: boolean;
   readonly isProduction: boolean;
+  /** True only when `dataMode` is `demo` *and* the build is not production. */
+  readonly isDemoData: boolean;
+}
+
+/**
+ * Demo data is refused in production, whatever the variable says.
+ *
+ * Not a warning and not a lint rule: the value is overwritten. A staging build that
+ * somebody flipped to demo, promoted to production by copying `.env`, would otherwise
+ * show five invented employees and three invented projects as a customer's business —
+ * and every screen would render it successfully, because nothing about the fixture is
+ * invalid. Overwriting means the failure mode of getting this wrong is "reads the real
+ * database", which is the safe direction.
+ *
+ * A production organization with genuine sample data should load a seed through
+ * Postgres instead, where RLS applies to it exactly as it applies to everything else.
+ *
+ * Unset means demo in development and live in staging, which is the asymmetry that
+ * makes the mode useful: a developer who has just cloned the repository gets a working
+ * Copilot over a realistic business with no database and no setup, which is the entire
+ * reason the mode exists, and the same unset variable in staging means the opposite.
+ */
+export function effectiveDataMode(appEnv: AppEnvironment, requested: DataMode | undefined): DataMode {
+  if (appEnv === 'production') return 'live';
+  // An explicit choice outranks the per-environment default in both directions. The
+  // default is a convenience for the common case, not a policy: a developer pointing
+  // the app at a real database has to be able to say so, and a staging build that
+  // genuinely wants the fixture has to be able to ask for it.
+  if (requested !== undefined) return requested;
+  return appEnv === 'development' ? 'demo' : 'live';
 }
 
 /**
@@ -178,13 +233,18 @@ export function resolveClientEnv(raw: Readonly<Record<string, unknown>>): Client
 
   const value = parsed.data;
 
+  const appEnv: AppEnvironment = value.appEnv;
+  const dataMode = effectiveDataMode(appEnv, value.dataMode);
+
   return {
-    appEnv: value.appEnv,
+    appEnv,
+    dataMode,
     supabaseUrl: value.supabaseUrl,
     supabasePublishableKey: value.supabasePublishableKey,
     debugLogging: value.debugLogging,
-    isDevelopment: value.appEnv === 'development',
-    isStaging: value.appEnv === 'staging',
-    isProduction: value.appEnv === 'production',
+    isDevelopment: appEnv === 'development',
+    isStaging: appEnv === 'staging',
+    isProduction: appEnv === 'production',
+    isDemoData: dataMode === 'demo',
   };
 }

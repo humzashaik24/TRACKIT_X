@@ -11,6 +11,7 @@ import {
   clientEnvSchema,
   describeFailure,
   describeLeak,
+  effectiveDataMode,
   findLeakedSecrets,
   forbiddenPublicSuffixes,
   resolveClientEnv,
@@ -177,5 +178,61 @@ describe('error messages', () => {
     expect(message).toContain('EXPO_PUBLIC_GEMINI_API_KEY');
     expect(message).toContain('supabase secrets set');
     expect(message).not.toContain('AIza');
+  });
+});
+
+/**
+ * Phase 38 - the data mode switch.
+ *
+ * These assertions are about one specific catastrophe: a build that serves invented
+ * business data in front of somebody who believes it is real. Nothing about a fixture
+ * is invalid, so every screen renders it perfectly, and the user has no way to tell
+ * that the five employees do not exist. The only defence is that the mode is decided in
+ * one function, defaults per environment, and cannot be turned on in production.
+ */
+describe('data mode', () => {
+  it('reads the mode from EXPO_PUBLIC_DATA_MODE', () => {
+    const parsed = clientEnvSchema.parse({ ...validRaw, dataMode: 'demo' });
+    expect(parsed.dataMode).toBe('demo');
+  });
+
+  it('treats an unset mode as unset rather than as a value', () => {
+    // Not defaulted here. Collapsing "unset" into one of the two values at parse time
+    // would make the per-environment default inexpressible, and the whole design rests
+    // on "unset" meaning different things in development and in staging.
+    const parsed = clientEnvSchema.parse({ ...validRaw, dataMode: '' });
+    expect(parsed.dataMode).toBeUndefined();
+  });
+
+  it('rejects a mode it does not recognise instead of guessing', () => {
+    // A typo must not silently fall back to live data in development, where a
+    // developer would be left staring at an empty database with no explanation.
+    for (const bad of ['Demo', 'DEMO', 'true', '1', 'mock']) {
+      expect(clientEnvSchema.safeParse({ ...validRaw, dataMode: bad }).success).toBe(false);
+    }
+  });
+
+  it('defaults to demo in development and live everywhere else', () => {
+    // Development gets the fixture so a fresh clone runs with no database and no
+    // setup, which is the reason the mode exists.
+    expect(effectiveDataMode('development', undefined)).toBe('demo');
+    // Every other environment gets the real table, because a fixture organization
+    // appearing where a customer's records should be is not a recoverable mistake.
+    expect(effectiveDataMode('staging', undefined)).toBe('live');
+    expect(effectiveDataMode('production', undefined)).toBe('live');
+  });
+
+  it('honours an explicit choice outside production', () => {
+    expect(effectiveDataMode('development', 'live')).toBe('live');
+    expect(effectiveDataMode('staging', 'demo')).toBe('demo');
+  });
+
+  it('refuses demo in production even when it is asked for', () => {
+    // Overwritten, not warned about. A staging build flipped to demo and promoted by
+    // copying .env would otherwise show five invented employees as a customer's
+    // business, and every screen would render it successfully. Overwriting makes the
+    // failure mode of getting this wrong "reads the real database", which is safe.
+    expect(effectiveDataMode('production', 'demo')).toBe('live');
+    expect(effectiveDataMode('production', 'live')).toBe('live');
   });
 });

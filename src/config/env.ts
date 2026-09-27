@@ -25,6 +25,7 @@ import { resolveClientEnv, type ClientEnv } from './envSchema';
  */
 const rawClientEnv = {
   appEnv: process.env.EXPO_PUBLIC_APP_ENV,
+  dataMode: process.env.EXPO_PUBLIC_DATA_MODE,
   supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
   supabasePublishableKey: process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
   debugLogging: process.env.EXPO_PUBLIC_DEBUG_LOGGING,
@@ -49,4 +50,4 @@ const ambientEnv: Record<string, string | undefined> =
  */
 export const env: ClientEnv = resolveClientEnv({ ...ambientEnv, ...rawClientEnv });
 
-export type { AppEnvironment, ClientEnv } from './envSchema';
+export type { AppEnvironment, ClientEnv, DataMode } from './envSchema';

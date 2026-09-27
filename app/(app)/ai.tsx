@@ -51,6 +51,7 @@ import { useCopilot } from '@/features/copilot/useCopilot';
 import { deriveBreadcrumbs } from '@/navigation/breadcrumbs';
 import { getAIGatewayStatus } from '@/services/aiProviderService';
 import { COPILOT_GATEWAY_UNAVAILABLE_MESSAGE } from '@/services/copilotService';
+import { isDemoDataMode } from '@/services/demoDataService';
 
 const styles = createStyles((theme) => ({
   grow: {
@@ -85,6 +86,7 @@ export default function AIScreen() {
 
   const gateway = getAIGatewayStatus();
   const unavailableReason = gateway.available ? undefined : COPILOT_GATEWAY_UNAVAILABLE_MESSAGE;
+  const showDemoData = isDemoDataMode();
 
   return (
     <ScreenContainer
@@ -109,6 +111,26 @@ export default function AIScreen() {
             {role === null ? null : (
               <Badge label={ROLE_LABELS[role]} intent="accent" variant="soft" size="sm" />
             )}
+            {/*
+             * The demo-data badge.
+             *
+             * The one thing this phase must never do is let a demonstration business be
+             * mistaken for a real one. Nothing about the fixture is invalid, so every
+             * screen renders it perfectly and "Neha Iyer is overloaded" reads exactly
+             * like a finding about a colleague. The badge says which it is, and it sits
+             * beside the gateway badge rather than replacing it: demo data and a working
+             * provider are independent facts, and collapsing them would imply that demo
+             * mode implies a live model.
+             */}
+            {showDemoData ? (
+              <Badge
+                label="Demo data"
+                icon="info"
+                intent="info"
+                variant="soft"
+                size="sm"
+              />
+            ) : null}
             <Badge
               label={gateway.available ? 'Ready' : 'Not available yet'}
               intent={gateway.available ? 'success' : 'warning'}
@@ -158,7 +180,11 @@ export default function AIScreen() {
             inline
             icon="aiCopilot"
             title={FIRST_RUN_TITLE}
-            description={FIRST_RUN_DESCRIPTION}
+            description={
+              showDemoData
+                ? `${FIRST_RUN_DESCRIPTION} This build is running on the Trackit X demonstration dataset, so the employees, projects and tasks it reasons about are sample records rather than your own.`
+                : FIRST_RUN_DESCRIPTION
+            }
           />
           {/*
            * The suggestions are the four questions a delivery workspace actually gets
