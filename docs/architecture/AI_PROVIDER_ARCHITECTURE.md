@@ -332,51 +332,64 @@ No completion, prompt assembly or streaming is implemented.
 | Suite | Coverage | Status |
 |---|---|---|
 | `tests/unit/aiProvidersSecurity.test.ts` | 11 groups: tenancy, client-type shape, no plaintext anywhere, AsyncStorage, logs/redaction, connection-status fabrication, registry integrity | **Passing** |
-| `supabase/tests/rls_isolation.sql` §17 | 39 assertions: tenancy, role gates, column-level secret boundary, database invariants | **Written, not executed** — see §10 |
+| `supabase/tests/rls_isolation.sql` §17 | 40 assertions: tenancy, role gates, column-level secret boundary, database invariants | **Passing** — executed 2026-09-27, 164 assertions across the whole file, 0 failures |
 | `npm run verify` | typecheck, ESLint (`--max-warnings=0`), Jest | **Passing** |
 | `npx expo export --platform web` | bundle builds; scanned for credential shapes | **Passing** |
 
 The client tests are honest about their ceiling: they cannot prove multi-tenant
 isolation, because RLS lives in Postgres and `supabase-js` in a unit test talks
-to a mock. That is precisely why §17 exists, and why §17 not executing is called
-out rather than glossed.
+to a mock. That is precisely why §17 exists, and why it was executed against a
+real database rather than left as written-but-unrun.
+
+§17 did not pass on its first execution. All five failures were in the test file,
+none in the migration, and each is recorded in the file header:
+
+- §17 used `a_admin` for admin-only writes, but assertion 8.5 demotes `a_admin`
+  to `manager`, so `has_organization_role(org, 'admin')` is correctly false and
+  the `WITH CHECK` correctly refused. The roles are now pinned by assertion 17.0,
+  and the refusals are asserted against a *manager*, which is the stronger control:
+  a manager holds genuine write authority elsewhere, so being refused proves the
+  gate is the admin threshold rather than "not the owner".
+- It caught the refusal with `new_row_violates_row_level_security_policy`, a
+  condition PostgreSQL 17 does not have. A failed `INSERT ... WITH CHECK` reports
+  42501, i.e. `insufficient_privilege`.
+- It read organization A's row while impersonating organization B, so RLS returned
+  no row and the comparison was `NULL`. The question is now asked as A's owner.
+- It called `public.set_config`; `set_config` is in `pg_catalog`.
+- It had the service role `SELECT`, `UPDATE` and `DELETE` the table. The migration
+  grants the service role none of those, deliberately. See §5.
+
+The last one is worth stating as a property rather than a fix: the service role's
+only reach into `ai_provider_configs` is `EXECUTE` on the two `SECURITY DEFINER`
+gateway functions, so §17 now has the service role write and the client observe
+the effect. The one-default invariant is proved as the table's owner, which is the
+only way to exercise the partial unique index — the service role cannot `INSERT`
+at all, so a test written from that role would have proved the grant, not the
+index.
 
 ---
 
 ## 10. Known limitations and deferred work
 
-1. **The SQL isolation suite has not been run.** Docker is not installed on the
-   Phase 35 machine and no Postgres is reachable on `127.0.0.1:54322`, so
-   `supabase db reset` and the `psql` invocation could not run. §17's 39
-   assertions are **unverified at runtime**. Sections 1–16 carry a prior
-   *executed and passing* result from Phase 33; §17 does not, and the file header
-   says so. Run it before trusting the grants:
-
-   ```bash
-   supabase db reset
-   psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" \
-        -v ON_ERROR_STOP=1 -f supabase/tests/rls_isolation.sql
-   ```
-
-2. **No credential storage.** Requires an AI Gateway (Supabase Edge Function or
+1. **No credential storage.** Requires an AI Gateway (Supabase Edge Function or
    equivalent) plus a vault. `aiSecretVault.availability` enumerates exactly what
    is needed.
 
-3. **No real connection test.** `connection_status` stays `unverified` until
+2. **No real connection test.** `connection_status` stays `unverified` until
    `record_ai_connection_test` runs as `service_role` after a real call.
 
-4. **No completions, streaming, or Copilot execution.** Out of scope.
+3. **No completions, streaming, or Copilot execution.** Out of scope.
 
-5. **Model registry needs re-verification** against provider docs and a live API
+4. **Model registry needs re-verification** against provider docs and a live API
    before it drives a real request. See §5.1.
 
-6. **No audit log.** No `activity_log` table or equivalent exists in this schema,
+5. **No audit log.** No `activity_log` table or equivalent exists in this schema,
    so no audit trail was written. Configuration changes — who enabled a provider,
    who moved the default — are currently untracked. When an audit facility lands
    it should record: organization, actor, provider, action, and timestamp, and
    must never record a handle or a key.
 
-7. **`src/types/database.generated.ts` is not updated.** It is git-ignored
+6. **`src/types/database.generated.ts` is not updated.** It is git-ignored
    (`.gitignore:74`) and unimported; `src/types/database.ts` is the hand-written
    source of truth for the AI types. Regenerate it when the project adopts a
    generation step.

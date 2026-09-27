@@ -30,36 +30,75 @@ patched; see *Corrections made to earlier work* below.
 | `npm run test` (Jest) | **PASS** — 20 suites, **628 tests** |
 | `npx expo export --platform web` | **PASS** — 2 web bundles emitted |
 | Bundle scanned for credential shapes | **PASS** — 0 hits (see below) |
-| `supabase/tests/rls_isolation.sql` §17 | **NOT EXECUTED** — Docker absent |
+| `supabase/tests/rls_isolation.sql` §17 | **PASS** — 40 assertions, 0 failures, executed 2026-09-27 |
+| Whole `rls_isolation.sql` | **PASS** — 164 assertions, 0 failures, 0 errors, rolled back |
 
-### The SQL suite did not run, and no result is claimed for it
+### The SQL suite ran, and what it took
 
-`supabase/tests/rls_isolation.sql` section 17 adds **39 assertions** covering
+An earlier revision of this document claimed the suite could not be executed
+because "Docker Desktop is not installed". That was wrong, and the mistake was
+mine: Docker Desktop **is** installed on this machine, per-user, at
+`C:\Users\humza\AppData\Local\Programs\DockerDesktop\Docker Desktop.exe`. The
+earlier check only looked under `C:\Program Files\Docker`. With the engine
+started, the local stack came up on its own and `supabase db reset` applied all
+three migrations, including `20260927120000_ai_provider_configs.sql`, cleanly.
+
+`supabase/tests/rls_isolation.sql` section 17 adds **40 assertions** covering
 tenancy, role gates, the column-level secret boundary, and database invariants.
 
-It could not be executed. On this machine:
+It failed on the first execution, at 17.1. Every failure was in the test file.
+**The migration was not defective, and no application code was changed.** The five
+causes, all now recorded in the file header:
 
-- Docker Desktop is **not installed** (`C:\Program Files\Docker\Docker\Docker Desktop.exe` absent), so `supabase db reset` cannot start a local stack.
-- `psql` is not on `PATH`.
-- Nothing is listening on `127.0.0.1:54322` (connection actively refused).
+1. **Stale fixture role.** §17 used `a_admin` for admin-only writes, but
+   assertion 8.5 demotes `a_admin` to `manager`. `has_organization_role(org,
+   'admin')` is then correctly false and the `WITH CHECK` correctly refused the
+   insert. §17 was written as if the section 1 fixture still held, and section 8
+   had moved it. Fixed by using `a_owner` for writes that must succeed and
+   `a_admin` (now a manager) for writes that must be refused, plus a new 17.0 that
+   pins both roles so a future change fails with an explanation.
+2. **Non-existent exception condition.** The refusal was caught with
+   `new_row_violates_row_level_security_policy`. PostgreSQL 17 has no such
+   condition; a failed `INSERT ... WITH CHECK` reports SQLSTATE 42501, which is
+   `insufficient_privilege`. Naming an unknown condition aborted the block before
+   any assertion ran.
+3. **Cross-tenant vantage point.** 17.15 read organization A's row while
+   impersonating organization B. RLS correctly returned no row, so the comparison
+   was `NULL`, not `true`, and it failed having proved nothing. It is now asked as
+   A's owner, which is also the more meaningful cross-tenant check: B's writes do
+   not merely fail to reach A, they provably do not land in A.
+4. **Wrong schema.** `public.set_config` does not exist; `set_config` is in
+   `pg_catalog`.
+5. **Wrong assumptions about the service role.** §17 had the service role
+   `SELECT`, `UPDATE` and `DELETE` `ai_provider_configs`. The migration grants it
+   **none** of those, on purpose: its only reach is `EXECUTE` on the two
+   `SECURITY DEFINER` gateway functions. The section now has the service role
+   write and the client observe the effect, and the one-default invariant is proved
+   as the table's owner, which is the only way to actually exercise the partial
+   unique index.
 
-The Supabase CLI itself is present (`2.115.0`), but it is only a client for a
-daemon that is not running.
+Two of these make the suite stronger, not merely correct, and it is worth saying
+so rather than treating the diff as damage control:
 
-**Sections 1–16** of that file carry a prior *executed and passing* result from
-Phase 33 (124 assertions). **Section 17 does not.** The file header states this
-explicitly, and `docs/architecture/AI_PROVIDER_ARCHITECTURE.md` §9 repeats it. Run
-before trusting the column grants:
+- The refusals in 17.7–17.11 are asserted against a **manager** rather than a
+  member. A manager holds genuine write authority elsewhere in this schema, so
+  being refused proves the gate is specifically the admin threshold and not merely
+  "the caller is not the owner". A member would have been a weaker control for the
+  same assertion.
+- The client-read refusals use the **owner**, the highest client rank, so no
+  refusal can be explained away by the caller lacking access for some unrelated
+  reason. 17.16 and 17.35 then form a clean before/after pair: the owner could not
+  read `secret_reference` when it was `NULL`, and still cannot now that a real
+  vault handle exists.
 
-```bash
-supabase db reset
-psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" \
-     -v ON_ERROR_STOP=1 -f supabase/tests/rls_isolation.sql
-```
+The count moved from 39 to 40 because of the added 17.0 role pins. Nothing was
+removed to reach that number. The whole file is now **164 assertions, 0 failures,
+0 errors**, and the transaction rolls back, so the run keeps nothing.
 
-This matters more than usual, because the secret boundary is a **privilege**
-property. `RLS` decides which rows a role may touch; it cannot express "this
-column is unreadable". Only a real database can prove that
+This mattered more than usual, because the secret boundary is a **privilege**
+property. RLS decides which rows a role may touch; it cannot express "this column
+is unreadable". Only a real database can prove that, which is why the run was worth
+completing rather than leaving as written-but-unrun.
 `secret_reference` raises `42501` for `authenticated`.
 
 ### Bundle scan
@@ -145,7 +184,7 @@ to AI providers, and expected.
 
 ### Tests
 - `tests/unit/aiProvidersSecurity.test.ts` — 11 groups.
-- `supabase/tests/rls_isolation.sql` §17 — 39 assertions (unexecuted).
+- `supabase/tests/rls_isolation.sql` §17 — 40 assertions, executed and passing (164 across the file).
 
 ### Documentation
 - `docs/architecture/AI_PROVIDER_ARCHITECTURE.md` — security invariants, grants,
@@ -231,9 +270,10 @@ success. Both were rewritten; the probe now uses `EXECUTE` and asserts a boolean
 
 ## Known limitations
 
-- The 39 SQL assertions are **unverified at runtime** (§ above).
 - The unit tests cannot prove multi-tenant isolation: `supabase-js` talks to a
-  mock in Jest, and RLS lives in Postgres. That is what §17 is for.
+  mock in Jest, and RLS lives in Postgres. That is what §17 is for, and §17 now
+  supplies that proof — but only against a real database, so re-run
+  `rls_isolation.sql` after any change to the grants or policies.
 - The credential field is rendered but disabled. It is the correct final UI for a
   working vault, not a stub that pretends to save.
 - `defaultModelForProvider` and the registry assume model ids are provider-scoped

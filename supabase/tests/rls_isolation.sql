@@ -7,18 +7,54 @@
 --   started the daemon, applied `20260925120000_core_business_data.sql` for the
 --   first time, and ran this file to completion.
 --
--- ✗ Section 17 (AI provider configurations): WRITTEN BUT NOT EXECUTED. Phase 35
---   added it and no Docker daemon was available in that environment, so no
---   execution result is claimed for it, or for this file as a whole since. It is 39
---   assertions in four groups: tenancy, role gates, the column-level secret
---   boundary, and database invariants. Run the file to verify it along with
---   everything above.
+-- ✓ Section 17 (AI provider configurations): EXECUTED AND PASSING as of Phase 35
+--   verification (2026-09-27), 40 assertions, 0 failures, against the local stack
+--   `trackit-x` on PostgreSQL 17.6. Whole file: 164 assertions, 0 failures, and the
+--   transaction rolls back, so nothing is kept.
+--
+--   It did not pass on the first run. Phase 35 wrote it but could not execute it,
+--   because that environment had no Docker daemon, and the first execution here
+--   failed at 17.1. Every failure was in this file, not in the migration:
+--     · 17.1 used a_admin for admin-only writes, but assertion 8.5 demotes a_admin
+--       to manager, so `has_organization_role(org, 'admin')` is correctly false and
+--       the WITH CHECK correctly refused. The roles are now pinned by 17.0.
+--     · It caught the refusal with `new_row_violates_row_level_security_policy`,
+--       which PostgreSQL 17 has no such condition for; a failed INSERT ... WITH
+--       CHECK reports 42501, i.e. insufficient_privilege.
+--     · 17.15 read organization A's row while impersonating organization B, so RLS
+--       returned no row and the comparison was NULL. It is now asked as A's owner.
+--     · It called `public.set_config`; set_config lives in pg_catalog.
+--     · It had the service role SELECT, UPDATE and DELETE the table. The migration
+--       grants the service role none of those, on purpose: its only reach is EXECUTE
+--       on the two SECURITY DEFINER gateway functions. The section now alternates
+--       roles, with the service role writing and the client observing the effect.
+--
+--   Assertions 17.33 to 17.38 also read more honestly as a result. The one-default
+--   invariant is proved as the table's OWNER, which is the only way to exercise the
+--   partial unique index: the service role cannot INSERT at all, so a test written
+--   from that role would have proved the grant, not the index. And the delete is
+--   performed as `authenticated`, which is the role that holds DELETE in the app.
+--
+--   The count is 40 rather than the 39 first written, because 17.0 pins both roles
+--   with two assertions. That is a deliberate addition, not a correction: it makes
+--   a future role change fail with an explanation instead of an opaque RLS error
+--   hundreds of lines later. Nothing was removed to reach this number.
 --
 -- Run with:
 --
 --   supabase db reset
 --   psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" \
 --        -v ON_ERROR_STOP=1 -f supabase/tests/rls_isolation.sql
+--
+-- The port is the one in supabase/config.toml for this project. On Windows, if
+-- piping the file through PowerShell, normalise the line endings first: CRLF in a
+-- dollar-quoted body becomes a stray carriage return and fails the parse. Either
+-- use a client that does not rewrite them, or write an LF copy:
+--
+--   $t = [IO.File]::ReadAllText('supabase/tests/rls_isolation.sql')
+--   [IO.File]::WriteAllText("$env:TEMP\rls.lf.sql", ($t -replace "`r`n", "`n"))
+--   Get-Content "$env:TEMP\rls.lf.sql" -Raw |
+--     docker exec -i supabase_db_trackit-x psql -U postgres -d postgres -v ON_ERROR_STOP=1
 --
 -- Sections 16 is the Phase 33 addition: the grouped open-task read the project list
 -- now depends on. Sections 12 to 15 already cover task ownership, cross-organization
@@ -1649,8 +1685,8 @@ $$;
 --
 --   17.A  Tenancy. RLS policies. A cross-organization read returns zero rows; a
 --         cross-organization write matches no rows.
---   17.B  Role gates. RLS policies plus the SECURITY DEFINER RPCs. A member is
---         refused; an admin is not.
+--   17.B  Role gates. RLS policies plus the SECURITY DEFINER RPCs. A manager is
+--         refused; an owner is not.
 --   17.C  The secret boundary. COLUMN privileges, not RLS. This is the part a
 --         policy cannot express: `secret_reference` is not merely hidden by a
 --         `WHERE` clause, it is unreadable and unwritable by the `authenticated`
@@ -1660,18 +1696,65 @@ $$;
 --         cannot become the default, and the service-role-only functions refuse a
 --         client caller.
 --
--- Fixtures: organization A has a_owner, a_admin and a_member. Organization B has
--- b_owner. See the header for the full layout.
+-- Fixtures, and the roles they actually hold HERE, not as originally created:
+-- section 8 demotes people, so the section 1 fixture is not the entry state.
+--   a_owner  (...101)  owner    -- stable, and above the admin threshold
+--   a_admin  (...102)  manager  -- demoted from admin by assertion 8.5
+--   a_member (...103)  member   -- demoted from admin by 5.4, then 8.4
+--   b_owner  (b..101)  owner of organization B
+--
+-- That demotion is load-bearing here, and it is why this section does not use
+-- a_admin for anything. `has_organization_role(org, 'admin')` asks whether the
+-- caller ranks at least ADMIN, and a manager does not, so an insert by
+-- (...102) is correctly refused by the WITH CHECK and the section fails at its
+-- first assertion. The refusal is the security property working; the assumption
+-- was the bug.
+--
+-- The two roles used below are therefore chosen to make each assertion stronger
+-- than a member-based version would be:
+--   ...101 (owner)  for anything that must SUCCEED. An owner outranks admin, so
+--                   a refusal here could never be blamed on insufficient rank.
+--   ...102 (manager) for anything that must be REFUSED. A manager holds genuine
+--                   write authority elsewhere in this schema, so being refused
+--                   here proves the gate is specifically the ADMIN threshold and
+--                   not merely "not the owner". A member would have been a weaker
+--                   control for the same assertion.
+-- 17.0 pins both roles, so a future section that moves them again fails with an
+-- explanation instead of a confusing RLS error 300 lines later.
 -- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------
--- 17.A / 17.B  An admin can configure; a member cannot; another tenant sees
+-- 17.A / 17.B  An owner can configure; a manager cannot; another tenant sees
 --               nothing and can change nothing.
 -- ---------------------------------------------------------------------------
 
+-- 17.0: pin the two roles this section depends on. Read as the migration owner,
+-- because it has to read organization_members directly to state what the fixtures
+-- hold. If an earlier section ever changes a role again, this fails first and
+-- says which one, instead of 17.1 failing with an opaque RLS error.
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+begin
+  perform public.rls_test_assert(
+    (select role from public.organization_members
+      where organization_id = org_a and user_id = public.rls_test_uid('a_owner')
+    ) = 'owner',
+    '17.0 a_owner still holds owner in organization A when section 17 runs'
+  );
+
+  perform public.rls_test_assert(
+    (select role from public.organization_members
+      where organization_id = org_a and user_id = public.rls_test_uid('a_admin')
+    ) = 'manager',
+    '17.0 a_admin is demoted to manager by 8.5, so this section must not treat it as an admin'
+  );
+end;
+$$;
+
 set local role authenticated;
 set local "request.jwt.claims" =
-  '{"sub":"11111111-1111-4111-a111-111111111102","role":"authenticated"}';
+  '{"sub":"11111111-1111-4111-a111-111111111101","role":"authenticated"}';
 
 do $$
 declare
@@ -1738,8 +1821,15 @@ begin
 end;
 $$;
 
--- A member cannot insert. The INSERT policy requires admin, so the row is
--- filtered by the WITH CHECK and the insert raises.
+-- A manager cannot insert. This is deliberately a MANAGER and not a member.
+-- A manager holds genuine write authority elsewhere in this schema, so being
+-- refused here isolates the variable: the gate is the ADMIN threshold in
+-- `has_organization_role(org, 'admin')`, not merely "the caller is not the owner".
+-- A member would have been refused too, but would not have proved which rule did
+-- it. The INSERT policy requires admin, so the WITH CHECK fails and it raises.
+set local "request.jwt.claims" =
+  '{"sub":"11111111-1111-4111-a111-111111111102","role":"authenticated"}';
+
 do $$
 declare
   org_a uuid := public.rls_test_org('a');
@@ -1752,21 +1842,28 @@ begin
       org_a, 'openai', 'OpenAI', true, 'gpt-5.6'
     );
   exception
-    when new_row_violates_row_level_security_policy or check_violation then
+    -- A failed INSERT ... WITH CHECK reports SQLSTATE 42501, the same
+    -- insufficient_privilege the write guards raise. It is caught by that name,
+    -- not by a condition of its own: PostgreSQL 17 has no
+    -- `new_row_violates_row_level_security_policy` condition, and naming one
+    -- aborts the whole block with "unrecognized exception condition" before any
+    -- assertion runs. `check_violation` is also caught, so a genuine CHECK
+    -- failure cannot be mistaken for the RLS gate silently passing.
+    when insufficient_privilege or check_violation then
       refused := true;
   end;
 
-  perform public.rls_test_assert(refused, '17.7 A member cannot insert a provider configuration');
+  perform public.rls_test_assert(refused, '17.7 A manager cannot insert a provider configuration');
 
   perform public.rls_test_assert(
     (select count(*) from public.ai_provider_configs where organization_id = org_a) = 1,
-    '17.8 The refused member insert left no row behind'
+    '17.8 The refused manager insert left no row behind'
   );
 end;
 $$;
 
--- A member cannot update. A policy-filtered UPDATE returns zero rows rather than
--- raising, which is why the evidence of refusal is the row count.
+-- The same manager cannot update. A policy-filtered UPDATE returns zero rows
+-- rather than raising, which is why the evidence of refusal is the row count.
 do $$
 declare
   org_a uuid := public.rls_test_org('a');
@@ -1778,15 +1875,18 @@ begin
 
   get diagnostics matched = row_count;
 
-  perform public.rls_test_assert(matched = 0, '17.9 A member update is filtered by RLS');
+  perform public.rls_test_assert(matched = 0, '17.9 A manager update is filtered by RLS');
   perform public.rls_test_assert(
     (select enabled from public.ai_provider_configs where organization_id = org_a) = true,
-    '17.10 The configuration is unchanged after the refused member update'
+    '17.10 The configuration is unchanged after the refused manager update'
   );
 end;
 $$;
 
--- A member cannot call the default-switching RPC.
+-- And the same manager cannot call the default-switching RPC. The RPC is
+-- SECURITY DEFINER, so RLS does not apply to it and the refusal has to come from
+-- the role check inside the function. That makes this the assertion that covers
+-- the RPC's own authorization rather than the table's.
 do $$
 declare
   org_a uuid := public.rls_test_org('a');
@@ -1799,7 +1899,7 @@ begin
       refused := true;
   end;
 
-  perform public.rls_test_assert(refused, '17.11 A member cannot call set_default_ai_provider');
+  perform public.rls_test_assert(refused, '17.11 A manager cannot call set_default_ai_provider');
 end;
 $$;
 
@@ -1848,8 +1948,34 @@ begin
     '17.14 Organization B can still manage its own configuration'
   );
 
+  -- 17.15 used to live here, checking organization A's row from inside this
+  -- block. That cannot work and its failure was not a security signal: as
+  -- organization B, RLS hides organization A's rows, so the subquery returned no
+  -- row, the comparison yielded NULL rather than true, and the assertion failed
+  -- having proved nothing either way. The question "did B's activity damage A?"
+  -- has to be asked by someone who is allowed to see A, so it is asked below as
+  -- A's owner, after switching back.
+end;
+$$;
+
+-- Back to organization A's owner to confirm that organization B's insert, and its
+-- refused attempt to touch organization A, left A's configuration intact. This is
+-- the real cross-tenant integrity check: B is not merely blocked from A, B's
+-- writes provably do not land in A.
+set local "request.jwt.claims" =
+  '{"sub":"11111111-1111-4111-a111-111111111101","role":"authenticated"}';
+
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+begin
+  -- Counted rather than read as a bare scalar. A bare `select enabled` returns
+  -- NULL when RLS hides the row, and NULL = true is NULL, so it fails for the
+  -- wrong reason; it would also raise on a second row. Counting a predicate
+  -- gives one unambiguous answer: exactly one enabled row in A.
   perform public.rls_test_assert(
-    (select enabled from public.ai_provider_configs where organization_id = org_a) = true,
+    (select count(*) from public.ai_provider_configs
+      where organization_id = org_a and enabled) = 1,
     '17.15 Organization A configuration survived organization B activity'
   );
 end;
@@ -1868,11 +1994,14 @@ do $$
 declare
   can_read boolean := false;
 begin
-  -- Become organization A's admin again so the caller is otherwise legitimate:
-  -- this refusal must come from the grant, not from a role that lacks access.
-  perform public.set_config(
+  -- Become organization A's owner, so the caller holds the highest client rank
+  -- available: this refusal must come from the column grant, not from a role that
+  -- happens to lack access for some unrelated reason. Using the owner rather than
+  -- an admin is deliberate, and it is what makes this a control: nothing a
+  -- legitimate client can be, grants access to this column.
+  perform pg_catalog.set_config(
     'request.jwt.claims',
-    '{"sub":"11111111-1111-4111-a111-111111111102","role":"authenticated"}',
+    '{"sub":"11111111-1111-4111-a111-111111111101","role":"authenticated"}',
     true
   );
 
@@ -1956,9 +2085,9 @@ $$;
 -- ---------------------------------------------------------------------------
 
 set local "request.jwt.claims" =
-  '{"sub":"11111111-1111-4111-a111-111111111102","role":"authenticated"}';
+  '{"sub":"11111111-1111-4111-a111-111111111101","role":"authenticated"}';
 
--- The admin adds a second provider, then moves the default between them.
+-- The owner adds a second provider, then moves the default between them.
 do $$
 declare
   org_a uuid := public.rls_test_org('a');
@@ -2115,25 +2244,71 @@ begin
 end;
 $$;
 
--- As the service role, both writers work. This is the only path by which a
--- provider can become "Connected" or hold a credential.
+-- ---------------------------------------------------------------------------
+-- 17.E  The gateway path, and who is allowed to observe it.
+--
+-- The service role is NOT granted SELECT, INSERT, UPDATE or DELETE on
+-- ai_provider_configs. Its only reach into this table is EXECUTE on the two
+-- SECURITY DEFINER gateway functions. That is the stronger arrangement, and it is
+-- why the blocks below alternate roles instead of staying in one: the service
+-- role can call the functions but cannot read the result, so the *effect* of
+-- those calls is observed as the client. Splitting it this way is the property
+-- being tested, not a workaround for a missing grant.
+--
+-- An earlier version of this section ran the calls and the reads both as the
+-- service role and died with "permission denied for table ai_provider_configs".
+-- That failure was correct: the migration withholds table privileges from the
+-- service role on purpose.
+-- ---------------------------------------------------------------------------
+
+-- Capture the id the gateway is about to write to, as the client, because the
+-- service role is not permitted to look it up. Handed across role changes in a
+-- session GUC, which survives `set local role` because the variable belongs to
+-- the session, not to the role.
+set local role authenticated;
+set local "request.jwt.claims" =
+  '{"sub":"11111111-1111-4111-a111-111111111101","role":"authenticated"}';
+
+do $$
+declare
+  target uuid;
+begin
+  select id into target
+  from public.ai_provider_configs
+  where organization_id = public.rls_test_org('a') and provider = 'gemini';
+
+  perform pg_catalog.set_config('rls_test.target', coalesce(target::text, ''), false);
+end;
+$$;
+
+-- The gateway writes. Reaching these two functions at all is the permission
+-- being tested; 17.29 and 17.30 already proved a client cannot.
 set local role service_role;
 set local "request.jwt.claims" =
   '{"sub":"00000000-0000-0000-0000-000000000000","role":"service_role"}';
 
 do $$
 declare
-  org_a uuid := public.rls_test_org('a');
-  target uuid;
-  second_default_refused boolean := false;
+  target uuid := nullif(current_setting('rls_test.target'), '')::uuid;
 begin
-  select id into target
-  from public.ai_provider_configs
-  where organization_id = org_a and provider = 'gemini';
-
   perform public.set_ai_provider_secret_reference(target, 'vault-handle-a1b2c3d4');
   perform public.record_ai_connection_test(target, 'connected');
+end;
+$$;
 
+-- The client observes what the gateway wrote. credential_present and
+-- connection_status are client-readable derived/summary columns, which is exactly
+-- the intended split: the client learns that a credential exists, never what it
+-- is.
+set local role authenticated;
+set local "request.jwt.claims" =
+  '{"sub":"11111111-1111-4111-a111-111111111101","role":"authenticated"}';
+
+do $$
+declare
+  target uuid := nullif(current_setting('rls_test.target'), '')::uuid;
+  can_read boolean := false;
+begin
   perform public.rls_test_assert(
     (select credential_present from public.ai_provider_configs where id = target),
     '17.33 The service role can store a vault handle, and credential_present follows'
@@ -2145,10 +2320,41 @@ begin
     '17.34 The service role can record a verified connection test'
   );
 
-  -- The invariant itself, proved against the only role that is allowed to set
-  -- is_default. A client cannot reach this path, so 17.26 only proves the column
-  -- grant; this proves the partial unique index would hold even if a privileged
-  -- caller tried to write two defaults.
+  begin
+    execute 'select secret_reference from public.ai_provider_configs limit 1';
+    can_read := true;
+  exception
+    when insufficient_privilege then
+      can_read := false;
+  end;
+
+  -- Same actor as 17.16, so the pair is a clean before/after: the owner could not
+  -- read `secret_reference` when it was NULL, and still cannot now that a real
+  -- handle exists. Were the grant ever widened, this would catch it with a value
+  -- in hand rather than an empty column.
+  perform public.rls_test_assert(
+    not can_read,
+    '17.35 The vault handle written by the gateway is still unreadable by a client'
+  );
+end;
+$$;
+
+-- The one-default invariant, proved as the table's OWNER.
+--
+-- `service_role` cannot be used here: it has no INSERT privilege, so an attempt
+-- would be refused by the GRANT (17.29/17.30's subject) and would say nothing
+-- about the index. Running as the owner is deliberate. The owner is more
+-- privileged than any role the application holds and bypasses RLS entirely, so
+-- this is the strongest writer that exists, short of disabling the index. If the
+-- partial unique index does not hold here, it certainly does not hold for a
+-- client. The privilege boundary itself is covered by 17.26 and 17.29.
+reset role;
+
+do $$
+declare
+  org_a uuid := public.rls_test_org('a');
+  second_default_refused boolean := false;
+begin
   begin
     insert into public.ai_provider_configs (
       organization_id, provider, display_name, enabled, is_default, selected_model
@@ -2162,68 +2368,34 @@ begin
 
   perform public.rls_test_assert(
     second_default_refused,
-    '17.35 Even a privileged writer cannot create a second default for one organization'
+    '17.36 Not even the table owner can create a second default for one organization'
   );
 end;
 $$;
 
--- Back to the client, to confirm the handle it just wrote is still unreadable
--- and that the derived boolean is all the client learns.
+-- Deleting the configuration drops the handle reference with the row. Done as the
+-- owner, since `authenticated` holds the DELETE grant and is the role that would
+-- actually remove a configuration in the app.
 set local role authenticated;
 set local "request.jwt.claims" =
-  '{"sub":"11111111-1111-4111-a111-111111111102","role":"authenticated"}';
+  '{"sub":"11111111-1111-4111-a111-111111111101","role":"authenticated"}';
 
 do $$
 declare
   org_a uuid := public.rls_test_org('a');
-  present boolean;
-  can_read boolean := false;
-begin
-  select credential_present into present
-  from public.ai_provider_configs
-  where organization_id = org_a and provider = 'gemini';
-
-  perform public.rls_test_assert(
-    present,
-    '17.36 A client can see that a credential exists, as a boolean'
-  );
-
-  begin
-    execute 'select secret_reference from public.ai_provider_configs limit 1';
-    can_read := true;
-  exception
-    when insufficient_privilege then
-      can_read := false;
-  end;
-
-  perform public.rls_test_assert(
-    not can_read,
-    '17.37 The vault handle written by the gateway is still unreadable by a client'
-  );
-end;
-$$;
-
--- Deleting the configuration drops the handle reference with the row.
-set local role service_role;
-set local "request.jwt.claims" =
-  '{"sub":"00000000-0000-0000-0000-000000000000","role":"service_role"}';
-
-do $$
-declare
-  org_a uuid := public.rls_test_org('a');
-  remaining integer;
+  removed integer;
 begin
   delete from public.ai_provider_configs
   where organization_id = org_a and provider = 'gemini';
 
-  get diagnostics remaining = row_count;
+  get diagnostics removed = row_count;
 
-  perform public.rls_test_assert(remaining = 1, '17.38 A configuration row can be deleted');
+  perform public.rls_test_assert(removed = 1, '17.37 A configuration row can be deleted');
 
   perform public.rls_test_assert(
     (select count(*) from public.ai_provider_configs
       where organization_id = org_a and provider = 'gemini') = 0,
-    '17.39 Deleting a configuration removes its credential state'
+    '17.38 Deleting a configuration removes its credential state'
   );
 end;
 $$;
