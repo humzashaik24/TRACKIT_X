@@ -5,9 +5,9 @@
  * chrome variants cannot drift apart.
  *
  * ── `ready` is a promise about honesty, not a feature flag ───────────────────
- * Phase 1 ships two working destinations. The other four are present because the
- * information architecture is decided, and hiding them would misrepresent the
- * product's shape — but each one says plainly that it is not built yet. A tab that
+ * Only the destinations that are finished carry `ready: true`. The rest are present
+ * because the information architecture is decided, and hiding them would misrepresent
+ * the product's shape — but each one says plainly that it is not built yet. A tab that
  * looks finished and shows an empty list is indistinguishable, to a user, from a
  * business with no projects. That is the failure mode this flag exists to prevent.
  */
@@ -302,10 +302,10 @@ const META: Record<DestinationPath, DestinationMeta> = {
     label: 'AI',
     longLabel: 'AI Copilot',
     icon: 'aiCopilot',
-    ready: false,
+    ready: true,
     summary:
       'Ask questions about your own data and get answers grounded in it — never invented.',
-    arrivesIn: 'A later phase',
+    arrivesIn: 'Available now',
     section: 'intelligence',
     bottomBar: true,
   },

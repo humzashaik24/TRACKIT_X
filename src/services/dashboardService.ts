@@ -38,6 +38,11 @@
  * contract silently widen every time somebody added a column. The narrow select is
  * also what makes the arithmetic's inputs auditable: every field in `DashboardSnapshot`
  * traces to one of these.
+ *
+ * The three lists are exported rather than kept private because a second reader of the
+ * same tables — `copilotService`, for the Copilot's citations — needs the same
+ * exclusions. Restating them would create a second place to forget an email column,
+ * which is the failure this list exists to prevent.
  */
 import { supabase } from '@/lib/supabase';
 import type { EmploymentStatus } from '@/domain/employee';
@@ -115,9 +120,21 @@ export interface DashboardFacts {
   readonly tasks: readonly DashboardTaskFact[];
 }
 
-const EMPLOYEE_COLUMNS = 'id, first_name, last_name, employment_status' as const;
-const PROJECT_COLUMNS = 'id, name, status, priority, progress, target_date, owner_id' as const;
-const TASK_COLUMNS = 'status, priority, progress, due_date, assignee_id' as const;
+/**
+ * Column lists, exported so a second reader of the same tables cannot drift.
+ *
+ * `copilotService` reads the same three tables for the same organization and needs
+ * `id`, `title` and `project_id` on tasks so a Copilot answer can cite the record it
+ * is talking about. Rather than restate the employee and project lists — and with
+ * them the decision to exclude email, phone and employee code — it composes its own
+ * task list from `DASHBOARD_TASK_COLUMNS` below. A column added to one of these is
+ * then added to both readers or to neither, instead of one of them quietly keeping
+ * a narrower view of the business and nobody noticing until an answer was wrong.
+ */
+export const DASHBOARD_EMPLOYEE_COLUMNS = 'id, first_name, last_name, employment_status' as const;
+export const DASHBOARD_PROJECT_COLUMNS =
+  'id, name, status, priority, progress, target_date, owner_id' as const;
+export const DASHBOARD_TASK_COLUMNS = 'status, priority, progress, due_date, assignee_id' as const;
 
 // ---------------------------------------------------------------------------
 // Reading
@@ -155,13 +172,13 @@ export async function readDashboardFacts(
     const [employees, projects, tasks] = await Promise.all([
       supabase
         .from('employees')
-        .select(EMPLOYEE_COLUMNS)
+        .select(DASHBOARD_EMPLOYEE_COLUMNS)
         .eq('organization_id', organizationId),
       supabase
         .from('projects')
-        .select(PROJECT_COLUMNS)
+        .select(DASHBOARD_PROJECT_COLUMNS)
         .eq('organization_id', organizationId),
-      supabase.from('tasks').select(TASK_COLUMNS).eq('organization_id', organizationId),
+      supabase.from('tasks').select(DASHBOARD_TASK_COLUMNS).eq('organization_id', organizationId),
     ]);
 
     // Checked in a fixed order rather than by "which failed first", so the reported

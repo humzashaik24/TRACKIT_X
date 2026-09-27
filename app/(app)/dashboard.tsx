@@ -108,9 +108,14 @@ const styles = createStyles((theme) => ({
  *
  * The sidebar already lists every unfinished destination, so repeating all twenty here
  * would be noise. This is the subset a business owner would reasonably expect to find on
- * a dashboard and cannot: the score, the money, the stock, and the assistant. Each one
- * is absent because a table it depends on does not exist, and saying so is more useful
- * than leaving a hole in the layout.
+ * a dashboard and cannot: the score, the money, and the stock. Each one is absent
+ * because a table it depends on does not exist, and saying so is more useful than
+ * leaving a hole in the layout.
+ *
+ * The AI Copilot was on this list until Phase 37, and was removed rather than left: a
+ * card reading "AI Copilot — a later phase" directly above a working Copilot in the
+ * bottom bar is the kind of contradiction this section is supposed to prevent rather than
+ * produce.
  *
  * The labels, summaries and phase names come from `destinations.ts` — the same table the
  * navigation is built from — so this cannot drift from the sidebar, and tapping a card
@@ -120,7 +125,6 @@ const DASHBOARD_GAPS: readonly DestinationPath[] = [
   '/business-health',
   '/finance',
   '/inventory',
-  '/ai',
 ];
 
 function NotBuiltYet({ destination }: { readonly destination: Destination }) {

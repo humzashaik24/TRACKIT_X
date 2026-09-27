@@ -8,8 +8,8 @@
  *  · the sidebar groups match the intended information architecture;
  *  · the compact bottom bar never exceeds its constraint, and only shows
  *    destinations that also exist in the sidebar;
- *  · `ready` stays honest — exactly the four finished screens are marked ready,
- *    and a ready destination does not still advertise a future phase;
+ *  · `ready` stays honest — exactly the finished screens are marked ready, and a
+ *    ready destination does not still advertise a future phase;
  *  · every destination resolves to a real route file, so a menu item cannot
  *    silently point at a screen that does not exist (the "expose only routes
  *    that actually exist" rule);
@@ -113,6 +113,7 @@ describe('destinations — honesty of `ready`', () => {
    * the flag exists to prevent. Updating this list is a deliberate act.
    */
   const READY_PATHS: readonly string[] = [
+    '/ai',
     '/dashboard',
     '/employees',
     '/more',

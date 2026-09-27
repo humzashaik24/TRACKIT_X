@@ -30,6 +30,10 @@
  * "ignore previous instructions" is indistinguishable from an instruction, and
  * a business database is exactly the kind of place a user can type that.
  */
+import {
+  COPILOT_BEHAVIOUR_RULES,
+  COPILOT_OUTPUT_CONTRACT,
+} from './copilotInstructions.ts';
 import { COPILOT_SYSTEM_INSTRUCTIONS, UNTRUSTED_CONTENT_RULE } from './systemInstructions.ts';
 
 /**
@@ -52,10 +56,29 @@ const GUIDANCE_FENCE_CLOSE = '<<<END_TRACKITX_CALLER_GUIDANCE>>>';
  * replace it, or read it back. It is assembled once here so that the Copilot and
  * a bare "test this provider" call are governed by the same rules — a connection
  * test does not get a laxer prompt than a business question.
+ *
+ * ── Why Phase 37 added two more constants to this one string ───────────────────
+ * `COPILOT_SYSTEM_INSTRUCTIONS` says what the assistant is and what it may reason
+ * over. It did not say how it must behave — how to separate an observation from a
+ * recommendation, what to do when the context does not contain the answer, or what
+ * shape to reply in — and those rules cannot live on the client, because the client
+ * has no field that reaches this turn. A `systemInstructions` parameter on
+ * `GenerateRequestBody` would be the obvious place, and adding one would hand every
+ * user of the Copilot the ability to rewrite the rules that keep business data
+ * inside the organization.
+ *
+ * So they are constants too, joined here in the one place the system turn is built.
+ * The protection is unchanged and still total: the caller cannot extend this string,
+ * `PromptEnvelope.system` is readonly, and the adapter re-checks the exact value
+ * with `systemInstructionsAreIntact`. Adding rules to a protected prompt is a
+ * normal thing to do; making a *protected* prompt into a *caller-supplied* one would
+ * not be.
  */
 export const GATEWAY_SYSTEM_INSTRUCTIONS = [
   COPILOT_SYSTEM_INSTRUCTIONS,
+  COPILOT_BEHAVIOUR_RULES,
   UNTRUSTED_CONTENT_RULE,
+  COPILOT_OUTPUT_CONTRACT,
 ].join(' ');
 
 /** A prompt, in the neutral shape every adapter renders into its own wire format. */
