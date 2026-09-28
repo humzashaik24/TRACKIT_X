@@ -224,7 +224,15 @@ export interface ProjectDetail {
 }
 
 /**
- * A detail read, tagged with the project id it was read for.
+ * A detail read, tagged with the PAIR it was read for.
+ *
+ * The organization is half of the tag for the same reason it is in `useTaskDetail`:
+ * the URL keeps the id across an organization switch, so tagging on the project id
+ * alone would hold one organization's project on screen under another's header until
+ * the next read landed. On top of the tag, the fetched row's own `organization_id`
+ * is compared to the active organization — a row from another tenant is rendered as
+ * `notFound` rather than displayed, which is the same anti-probing rule the task
+ * detail follows.
  *
  * `notFound` lives inside the tag rather than beside it, because "this project is
  * not visible" and "this project has not been loaded yet" look identical from the
@@ -239,6 +247,7 @@ export interface ProjectDetail {
  * that cannot be read should not hide a membership list that was read fine.
  */
 interface ProjectDetailLoad {
+  readonly organizationId: string | null;
   readonly projectId: string | null;
   readonly project: ProjectListEntry | null;
   readonly members: readonly ProjectMemberEntry[];
@@ -249,6 +258,7 @@ interface ProjectDetailLoad {
 const NO_MEMBERS: readonly ProjectMemberEntry[] = [];
 
 const UNREAD_DETAIL: ProjectDetailLoad = {
+  organizationId: null,
   projectId: null,
   project: null,
   members: NO_MEMBERS,
@@ -256,21 +266,25 @@ const UNREAD_DETAIL: ProjectDetailLoad = {
   error: null,
 };
 
-export function useProjectDetail(projectId: string | null): ProjectDetail {
+export function useProjectDetail(
+  projectId: string | null,
+  organizationId: string | null,
+): ProjectDetail {
   const [load, setLoad] = useState<ProjectDetailLoad>(UNREAD_DETAIL);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const today = useMemo(() => todayKey(), []);
 
-  const isCurrent = load.projectId === projectId;
+  const isCurrent =
+    load.projectId === projectId && load.organizationId === organizationId;
   const project = isCurrent ? load.project : null;
   const members = isCurrent ? load.members : NO_MEMBERS;
   const notFound = isCurrent && load.notFound;
   const error = isCurrent ? load.error : null;
-  const isLoading = projectId !== null && !isCurrent;
+  const isLoading = projectId !== null && organizationId !== null && !isCurrent;
 
   useEffect(() => {
-    if (projectId === null) return;
+    if (projectId === null || organizationId === null) return;
     let cancelled = false;
 
     void (async () => {
@@ -285,13 +299,26 @@ export function useProjectDetail(projectId: string | null): ProjectDetail {
       if (cancelled) return;
 
       if (projectResult.ok) {
+        // A row that belongs to a different organization than the one in view is
+        // not a project of this tenant's, and showing it would put org A's record
+        // under org B's header. It renders as not-found — the same sentence a
+        // deleted row gets — so nothing in the UI states whether the record
+        // exists elsewhere.
+        if (projectResult.value.project.organization_id !== organizationId) {
+          setLoad({
+            organizationId,
+            projectId,
+            project: null,
+            members: NO_MEMBERS,
+            notFound: true,
+            error: null,
+          });
+          return;
+        }
         setLoad({
+          organizationId,
           projectId,
-          project: {
-            project: projectResult.value,
-            ownerName: null,
-            memberCount: membersResult.ok ? membersResult.value.length : 0,
-          },
+          project: projectResult.value,
           members: membersResult.ok ? membersResult.value : NO_MEMBERS,
           notFound: false,
           error: null,
@@ -304,6 +331,7 @@ export function useProjectDetail(projectId: string | null): ProjectDetail {
       // `getProject` follows: a refusal would confirm the row exists somewhere.
       // Rendered as an empty state, never as an error banner.
       setLoad({
+        organizationId,
         projectId,
         project: null,
         members: membersResult.ok ? membersResult.value : NO_MEMBERS,
@@ -315,10 +343,10 @@ export function useProjectDetail(projectId: string | null): ProjectDetail {
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [projectId, organizationId]);
 
   const refresh = useCallback(async (): Promise<void> => {
-    if (projectId === null) return;
+    if (projectId === null || organizationId === null) return;
     setIsRefreshing(true);
     try {
       const [projectResult, membersResult] = await Promise.all([
@@ -326,17 +354,23 @@ export function useProjectDetail(projectId: string | null): ProjectDetail {
         projects.listProjectMembers(projectId),
       ]);
       setLoad((current) => {
-        if (current.projectId !== projectId) return current;
+        if (current.projectId !== projectId || current.organizationId !== organizationId) {
+          return current;
+        }
         if (projectResult.ok) {
+          if (projectResult.value.project.organization_id !== organizationId) {
+            return {
+              ...current,
+              project: null,
+              members: NO_MEMBERS,
+              notFound: true,
+              error: null,
+            };
+          }
           return {
+            organizationId,
             projectId,
-            project: {
-              project: projectResult.value,
-              ownerName: current.project?.ownerName ?? null,
-              memberCount: membersResult.ok
-                ? membersResult.value.length
-                : (current.project?.memberCount ?? 0),
-            },
+            project: projectResult.value,
             members: membersResult.ok ? membersResult.value : current.members,
             notFound: false,
             error: null,
@@ -350,7 +384,7 @@ export function useProjectDetail(projectId: string | null): ProjectDetail {
     } finally {
       setIsRefreshing(false);
     }
-  }, [projectId]);
+  }, [projectId, organizationId]);
 
   return {
     project,

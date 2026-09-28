@@ -28,7 +28,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
-import { normalizeCopilotOutput } from '@/domain/ai/copilot';
+import { copilotReferenceRoute, normalizeCopilotOutput } from '@/domain/ai/copilot';
 import { COPILOT_BEHAVIOUR_RULES, COPILOT_OUTPUT_CONTRACT } from '@/domain/ai/copilotInstructions';
 import { GATEWAY_SYSTEM_INSTRUCTIONS, buildPrompt } from '@/domain/ai/gatewayPrompt';
 import { GATEWAY_LIMITS } from '@/domain/ai/gatewayProtocol';
@@ -609,16 +609,19 @@ describe('5. the model cannot act', () => {
     }
   });
 
-  it('renders an answer with no control that could carry one out', () => {
-    // The strongest available statement about the answer card: there is nothing in it
-    // that a reader can press. `Button` is absent entirely, and no URL is opened, so
-    // there is no path by which a model's words — or a model's label on a citation —
-    // could become an action, a navigation, or a request to another app.
+  it('lets a citation navigate only through the validated reference route', () => {
+    // A citation navigates when the record has a detail screen (project, task), and
+    // ONLY through `copilotReferenceRoute`, which turns the client's own entity id
+    // into one of those routes — the model never supplies a path. A model's words —
+    // or a model-returned label — therefore cannot direct navigation anywhere, and
+    // there is still no URL opening and no secondary control on the card.
     const source = stripComments(read('src/features/copilot/CopilotTurnView.tsx'));
     expect(source).not.toContain('Button');
     expect(source).not.toContain('Linking');
     expect(source).not.toContain('openURL');
-    expect(source).not.toContain('router.');
+    expect(source).toMatch(/router\.push\(route\.path/);
+    // The single navigation site means it cannot later be per-citation or per-label.
+    expect((source.match(/router\.push/g) ?? [])).toHaveLength(1);
   });
 
   it('keeps a recommendation as text and nothing more', async () => {
@@ -702,5 +705,27 @@ describe('6. citations resolve against the context that was sent', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.references).toEqual([{ entity: 'project', entityId: 'prj-alpha', label: 'Alpha' }]);
+  });
+});
+
+describe('copilotReferenceRoute — where "open this citation" goes', () => {
+  it('maps project and task citations to the record screen the id belongs to', () => {
+    expect(copilotReferenceRoute({ entity: 'project', entityId: 'prj-1', label: 'Alpha' })).toEqual({
+      ok: true,
+      path: '/projects/prj-1',
+    });
+    expect(copilotReferenceRoute({ entity: 'task', entityId: 'tsk-1', label: 'Fix gates' })).toEqual({
+      ok: true,
+      path: '/tasks/tsk-1',
+    });
+  });
+
+  it('refuses a route for employee citations until an employee detail screen exists', () => {
+    // A citation must let a reader verify the sentence. The People list does not
+    // show one employee's record, so it would "verify" nothing — the citation stays
+    // a plain label rather than a false link.
+    expect(copilotReferenceRoute({ entity: 'employee', entityId: 'emp-1', label: 'Aisha' })).toEqual({
+      ok: false,
+    });
   });
 });

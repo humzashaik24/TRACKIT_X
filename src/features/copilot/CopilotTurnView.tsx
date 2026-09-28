@@ -28,6 +28,9 @@
  * without adding an execution path would be a lie about what the app can do; adding
  * both is a security change, not a UI one.
  */
+import { router, type Href } from 'expo-router';
+import { Pressable } from 'react-native';
+
 import {
   Badge,
   Card,
@@ -40,7 +43,7 @@ import {
   VStack,
 } from '@/design-system';
 import type { CopilotResponse } from '@/domain/ai/copilot';
-import { COPILOT_INTENT_LABELS } from '@/domain/ai/copilot';
+import { COPILOT_INTENT_LABELS, copilotReferenceRoute } from '@/domain/ai/copilot';
 import { formatTime } from '@/utils/format';
 import { COPILOT_DATA_GAP_MESSAGES } from './contextBuilder';
 import type { CopilotTurn } from './useCopilot';
@@ -134,21 +137,41 @@ function Answer({ response }: { readonly response: CopilotResponse }) {
               {/*
                * These are records the client itself put in the request, matched back by
                * id. They are the checkable part of the answer: a reader who doubts a
-               * sentence can open the project or the task. No route is wired to them
-               * yet, because a citation that navigates nowhere is worse than one that
-               * is plainly a label — the id is on the record either way.
+               * sentence can open the project or the task. A citation therefore navigates
+               * when the record has a detail screen (project, task) and stays a plain
+               * label when it does not (employee — there is no employee detail screen, so
+               * pointing it at the People list would not verify the citation).
                */}
               <HStack gap={2} align="center" wrap>
-                {response.references.map((reference) => (
-                  <Badge
-                    key={`${reference.entity}-${reference.entityId}`}
-                    label={reference.label}
-                    icon={ENTITY_ICONS[reference.entity]}
-                    intent="neutral"
-                    variant="outline"
-                    size="sm"
-                  />
-                ))}
+                {response.references.map((reference) => {
+                  const route = copilotReferenceRoute(reference);
+                  return route.ok ? (
+                    <Pressable
+                      key={`${reference.entity}-${reference.entityId}`}
+                      accessibilityRole="link"
+                      accessibilityLabel={`Open ${reference.label}`}
+                      onPress={() => router.push(route.path as Href)}
+                      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+                    >
+                      <Badge
+                        label={reference.label}
+                        icon={ENTITY_ICONS[reference.entity]}
+                        intent="accent"
+                        variant="outline"
+                        size="sm"
+                      />
+                    </Pressable>
+                  ) : (
+                    <Badge
+                      key={`${reference.entity}-${reference.entityId}`}
+                      label={reference.label}
+                      icon={ENTITY_ICONS[reference.entity]}
+                      intent="neutral"
+                      variant="outline"
+                      size="sm"
+                    />
+                  );
+                })}
               </HStack>
             </VStack>
           ) : null}

@@ -62,11 +62,14 @@ export function EmptyState({
   const { isCompact } = useResponsive();
   const glyph = icon ?? variantIcon[variant];
   const medallion = inline ? 44 : 64;
+  const hasAction = action !== undefined || secondaryAction !== undefined;
 
   return (
     <View
-      accessible
-      accessibilityLabel={description === undefined ? title : `${title}. ${description}`}
+      // A flattened container would swallow the action button from a screen
+      // reader. The copy flattens only when there is nothing interactive to keep.
+      accessible={!hasAction}
+      accessibilityLabel={hasAction ? undefined : description === undefined ? title : `${title}. ${description}`}
       style={[
         {
           alignItems: 'center',

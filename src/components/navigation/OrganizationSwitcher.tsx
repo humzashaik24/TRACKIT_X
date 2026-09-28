@@ -119,6 +119,7 @@ export function OrganizationSwitcher() {
       <Pressable
         onPress={() => setOpen(true)}
         accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
         accessibilityLabel={`Switch workspace. Current: ${name}`}
         tabIndex={0}
         style={({ hovered }) => [s.trigger, hovered && s.triggerHovered]}

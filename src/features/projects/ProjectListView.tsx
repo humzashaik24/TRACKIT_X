@@ -519,7 +519,10 @@ export function ProjectListView() {
         size="md"
         scrollable
       >
+        {/* Keyed so a workspace switch cannot carry a half-typed draft or stale
+            picker values from one organization into another. */}
         <ProjectCreateForm
+          key={organizationId ?? 'none'}
           organizationId={organizationId ?? ''}
           employees={directory.rows}
           onCancel={() => {

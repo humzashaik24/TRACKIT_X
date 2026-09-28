@@ -17,7 +17,7 @@
  * screens cannot disagree and neither has to hold both tables in memory to answer a
  * question about one.
  */
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 
@@ -103,7 +103,7 @@ const styles = createStyles((theme) => ({
   },
 }));
 
-export function TaskListView() {
+export function TaskListView({ seedProjectId }: { seedProjectId?: string | null }) {
   const router = useRouter();
   const s = useStyles(styles);
   const { sectionGap } = useResponsive();
@@ -117,6 +117,18 @@ export function TaskListView() {
   // list is derivable from the tasks themselves.
   const directory = useEmployeeDirectory(organizationId);
   const projects = useProjectList(organizationId);
+
+  // A project filter can arrive in the URL (e.g. /tasks?project=<id> from a project
+  // screen's "View tasks"). It only SEEDS the filter — the screen stays a live list.
+  // Keyed on the pair so it re-seeds when someone switches organization while the
+  // screen is mounted, then drifts from the fixed string as the user refines it.
+  useEffect(() => {
+    if (seedProjectId === null || seedProjectId === undefined) return;
+    tasks.setFilters({ ...tasks.filters, projectId: seedProjectId } satisfies TaskFilters);
+    // Intentionally not retriggering on setFilters identity: this is a mount/keyed
+    // seed, not a subscription to the filter value.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [organizationId, seedProjectId]);
 
   const [sort, setSort] = useState<DataTableSort | undefined>({
     columnKey: 'due',

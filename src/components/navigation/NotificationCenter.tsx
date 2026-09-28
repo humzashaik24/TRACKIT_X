@@ -23,7 +23,10 @@ import {
   VStack,
 } from '@/design-system';
 import { useNotifications } from '@/features/notifications/useNotifications';
-import type { AppNotification } from '@/features/notifications/model';
+import {
+  notificationDestination,
+  type AppNotification,
+} from '@/features/notifications/model';
 
 import { HeaderPopover } from './HeaderPopover';
 
@@ -44,10 +47,13 @@ export function NotificationRow({ item }: { item: AppNotification }) {
       onPress={() => {
         // Navigate to the record this notification is about, when one exists.
         if (item.actionPath !== undefined) {
-          // The path comes from our own data model, never from a user string;
-          // the cast bridges a stale typed-routes declaration file during the
-          // interim between adding a route and Metro regenerating it.
-          router.push(item.actionPath as unknown as Href);
+          const destination = notificationDestination(item.actionPath);
+          if (destination.ok) {
+            // The destination has been validated against the route allowlist.
+            // The cast bridges a stale typed-routes declaration file during the
+            // interim between adding a route and Metro regenerating it.
+            router.push(destination.path as unknown as Href);
+          }
         }
       }}
       accessibilityRole="button"

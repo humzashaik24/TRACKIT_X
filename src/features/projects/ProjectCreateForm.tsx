@@ -152,7 +152,7 @@ export function ProjectCreateForm({
     <VStack gap={4}>
       {formError === undefined ? null : (
         <>
-          <Text variant="bodySm" tone="danger">
+          <Text variant="bodySm" tone="danger" accessibilityRole="alert">
             {formError}
           </Text>
           <Divider subtle />

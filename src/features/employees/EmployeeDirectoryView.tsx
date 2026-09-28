@@ -505,7 +505,10 @@ export function EmployeeDirectoryView() {
         size="md"
         scrollable
       >
+        {/* Keyed so a workspace switch cannot carry a half-typed draft or stale
+            picker values from one organization into another. */}
         <EmployeeCreateForm
+          key={organization?.id ?? 'none'}
           organizationId={organization?.id ?? ''}
           departments={directory.departmentList}
           existing={directory.rows}

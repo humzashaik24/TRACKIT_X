@@ -49,7 +49,13 @@ export default function SettingsScreen(): React.JSX.Element {
       />
 
       <VStack gap={5}>
-        <AIProvidersView />
+        {/*
+          Keyed by organization so the provider list re-mounts on a workspace switch.
+          The view owns draft state (model, enabled, default, the in-progress API key);
+          keeping that state across a switch would let an admin save an org-A draft
+          into org B.
+        */}
+        <AIProvidersView key={organization?.id ?? 'none'} />
 
         {/* ── Organization ─────────────────────────────────────────────────── */}
         <VStack gap={3}>

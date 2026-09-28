@@ -182,22 +182,29 @@ export function OrganizationProvider({ children }: OrganizationProviderProps) {
   const error = status === 'error' ? (fresh?.error ?? null) : null;
   const activeId = authStatus === 'signedIn' ? (fresh?.activeId ?? null) : null;
 
-  const selectOrganization = useCallback((organizationId: string) => {
-    setLoaded((previous) => {
-      if (previous === null) return previous;
+  const selectOrganization = useCallback(
+    (organizationId: string) => {
       // Refuses an id the user has no membership for. A client-side guard only —
       // RLS would return nothing for such an id anyway — but it keeps the UI from
       // entering a state where every panel is empty for no visible reason.
-      if (!previous.memberships.some((m) => m.organization.id === organizationId)) {
+      const allowed =
+        loaded !== null && loaded.memberships.some((m) => m.organization.id === organizationId);
+      if (!allowed) {
         log.warn('Ignored a selection outside the user’s memberships');
-        return previous;
+        return;
       }
+      // The selection is applied and only then persisted. The `AsyncStorage` write
+      // deliberately lives OUTSIDE the setState updater: the updater must stay pure
+      // (React may run it more than once, and side effects inside it make a rejected
+      // or double-applied selection unreliable), and persistence is a convenience —
+      // the in-memory switch must not depend on it.
+      setLoaded((previous) => (previous === null ? previous : { ...previous, activeId: organizationId }));
       void AsyncStorage.setItem(ACTIVE_ORGANIZATION_KEY, organizationId).catch(() => {
         // Persistence is a convenience; the selection already applied in memory.
       });
-      return { ...previous, activeId: organizationId };
-    });
-  }, []);
+    },
+    [loaded],
+  );
 
   const refresh = useCallback(async (): Promise<void> => {
     const next = await read();

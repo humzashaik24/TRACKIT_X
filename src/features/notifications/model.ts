@@ -83,3 +83,61 @@ export const NOTIFICATION_KIND_LABELS: Record<NotificationKind, string> = {
   approval: 'Approval',
   system: 'System',
 };
+
+/**
+ * A notification's `actionPath` is a string that scrolls out of the server, so it
+ * is NOT a Href. Before the centre navigates on it, this decides whether it is any
+ * of the destinations this app actually serves. Anything else ("open this page",
+ * arbitrary keys, paths with credentials) is refused: pushing an unknown string
+ * into the router both crashes the happy path and creates a tiny phishing
+ * surface — a malicious push could otherwise land a user on a screen they were
+ * never trying to reach.
+ *
+ * The allowlist is deliberately small and structural: every real destination the
+ * app can currently serve is one of the four route families.
+ */
+export type NotificationDestination =
+  | { readonly ok: true; readonly raw: string; readonly path: string }
+  | { readonly ok: false; readonly raw: string };
+
+export function notificationDestination(actionPath: string): NotificationDestination {
+  // Only relative paths that the router can open are accepted. Scheme-prefixed
+  // strings (mailto:, https:, custom schemes) are refused outright.
+  if (!actionPath.startsWith('/') || actionPath.startsWith('//')) {
+    return { ok: false, raw: actionPath };
+  }
+
+  let id: string | undefined;
+  const matchesId = (segment: string): boolean => {
+    id = segment;
+    return /^[0-9a-zA-Z][0-9a-zA-Z-_]*$/.test(segment);
+  };
+
+  const segments = actionPath.split('/').filter((part) => part.length > 0);
+  const [first = '', second, third] = segments;
+
+  if (
+    (first === 'projects') &&
+    second !== undefined &&
+    third === undefined &&
+    matchesId(second)
+  ) {
+    return { ok: true, raw: actionPath, path: `/projects/${id as string}` };
+  }
+  if (
+    (first === 'tasks') &&
+    second !== undefined &&
+    third === undefined &&
+    matchesId(second)
+  ) {
+    return { ok: true, raw: actionPath, path: `/tasks/${id as string}` };
+  }
+  if (first === 'more') {
+    return { ok: true, raw: actionPath, path: '/more' };
+  }
+  if (first === 'reports') {
+    return { ok: true, raw: actionPath, path: '/reports' };
+  }
+
+  return { ok: false, raw: actionPath };
+}

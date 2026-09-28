@@ -366,6 +366,21 @@ export function useTaskDetail(organizationId: string | null, taskId: string | nu
     void tasks.getTask(taskId).then((result) => {
       if (cancelled) return;
       if (result.ok) {
+        // The pair tag keeps an org-A response from landing under org B's header,
+        // but it cannot know what row the response holds. A task whose own
+        // `organization_id` is not the organization in view is rendered as
+        // not-found, not displayed: it declares that the record belongs to another
+        // tenant, and showing it would be the same leak the tag prevents.
+        if (result.value.organization_id !== organizationId) {
+          setLoad({
+            organizationId,
+            taskId,
+            task: null,
+            notFound: true,
+            error: null,
+          });
+          return;
+        }
         setLoad({
           organizationId,
           taskId,
@@ -400,6 +415,16 @@ export function useTaskDetail(organizationId: string | null, taskId: string | nu
       setLoad((current) => {
         if (current.organizationId !== organizationId || current.taskId !== taskId) return current;
         if (result.ok) {
+          if (result.value.organization_id !== organizationId) {
+            // Same rule as the initial read: a task belonging to the organization
+            // the user has left is removed from view, not refreshed into it.
+            return {
+              ...current,
+              task: null,
+              notFound: true,
+              error: null,
+            };
+          }
           return {
             ...current,
             task: {

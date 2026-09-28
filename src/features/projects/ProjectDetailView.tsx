@@ -18,6 +18,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { View } from 'react-native';
 
 import { PageHeader } from '@/components/navigation/PageHeader';
+import { useOrganization } from '@/contexts/OrganizationContext';
 import {
   Badge,
   Card,
@@ -85,7 +86,10 @@ export function ProjectDetailView() {
   const rawId = Array.isArray(params.id) ? params.id[0] : params.id;
   const projectId = typeof rawId === 'string' && rawId.length > 0 ? rawId : null;
 
-  const detail = useProjectDetail(projectId);
+  const { organization } = useOrganization();
+  const organizationId = organization?.id ?? null;
+
+  const detail = useProjectDetail(projectId, organizationId);
   const entry = detail.project;
   const project = entry?.project ?? null;
 
@@ -213,6 +217,13 @@ export function ProjectDetailView() {
             ) : null}
           </HStack>
         }
+        secondaryAction={{
+          label: 'View tasks',
+          icon: 'tasks',
+          onPress: () => {
+            router.push(`/tasks?project=${projectId}`);
+          },
+        }}
       />
 
       <Card>

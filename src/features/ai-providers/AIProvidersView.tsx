@@ -34,6 +34,7 @@ import {
   HStack,
   Icon,
   Input,
+  LoadingState,
   Modal,
   Select,
   Spacer,
@@ -172,6 +173,7 @@ export function AIProvidersView() {
     saving,
     busyProvider,
     error,
+    loadError,
     canManage,
     defaultResolution,
     gateway,
@@ -193,6 +195,10 @@ export function AIProvidersView() {
   const [draftDefault, setDraftDefault] = useState(false);
   const [credential, setCredential] = useState('');
   const [credentialError, setCredentialError] = useState<string | undefined>(undefined);
+  // Covers the WHOLE save: configuration write AND the credential submit. `saving`
+  // from the hook only spans the write, so without this the Save button stays
+  // clickable between the two — the double-submit window.
+  const [submitting, setSubmitting] = useState(false);
 
   const openEditor = useCallback(
     (provider: AIProviderId, config: AIProviderConfig | undefined) => {
@@ -219,7 +225,7 @@ export function AIProvidersView() {
   }, []);
 
   const handleSave = useCallback(async () => {
-    if (editing === null) return;
+    if (editing === null || submitting) return;
 
     if (credential.trim().length > 0) {
       const format = validateCredentialFormat(credential);
@@ -229,32 +235,37 @@ export function AIProvidersView() {
       }
     }
 
-    const saved = await save({
-      provider: editing,
-      selectedModel: draftModel ?? undefined,
-      enabled: draftEnabled,
-      makeDefault: draftDefault,
-    });
-    if (!saved) return;
+    setSubmitting(true);
+    try {
+      const saved = await save({
+        provider: editing,
+        selectedModel: draftModel ?? undefined,
+        enabled: draftEnabled,
+        makeDefault: draftDefault,
+      });
+      if (!saved) return;
 
-    if (credential.trim().length > 0) {
-      const stored = await submitCredential(editing, credential);
-      if (!stored) {
-        // The configuration change is already committed, so the sheet stays open
-        // with the credential intact and the reason visible. Discarding the key
-        // here would leave the administrator retyping it with no better outcome.
-        toast.show({
-          title: 'Provider saved',
-          message: 'The API key could not be stored. See the note on the screen.',
-          intent: 'warning',
-        });
-        return;
+      if (credential.trim().length > 0) {
+        const stored = await submitCredential(editing, credential);
+        if (!stored) {
+          // The configuration change is already committed, so the sheet stays open
+          // with the credential intact and the reason visible. Discarding the key
+          // here would leave the administrator retyping it with no better outcome.
+          toast.show({
+            title: 'Provider saved',
+            message: 'The API key could not be stored. See the note on the screen.',
+            intent: 'warning',
+          });
+          return;
+        }
       }
-    }
 
-    toast.show({ title: 'Provider updated', intent: 'success' });
-    closeEditor();
-  }, [closeEditor, credential, draftDefault, draftEnabled, draftModel, editing, save, submitCredential, toast]);
+      toast.show({ title: 'Provider updated', intent: 'success' });
+      closeEditor();
+    } finally {
+      setSubmitting(false);
+    }
+  }, [closeEditor, credential, draftDefault, draftEnabled, draftModel, editing, save, submitCredential, submitting, toast]);
 
   const handleTest = useCallback(
     async (config: AIProviderConfig) => {
@@ -311,6 +322,18 @@ export function AIProvidersView() {
           : `${model.summary} ${model.contextWindowTokens.toLocaleString()} token context.`,
     }));
   }, [editingDefinition]);
+
+  /**
+   * Whether the registry cards below may state anything about a provider.
+   *
+   * The cards claim "Not configured" / "Disabled" from the config list. That claim is
+   * only true once a read for THIS organization has actually landed: during the first
+   * load the list is absent, and after a failed read it is unknown. Both would render
+   * a false "not configured" — so the registry is hidden for those two states and the
+   * screen says loading/failed instead. A `fetching` reload over cards that already
+   * hold data keeps the cards (they are real data, not a guess).
+   */
+  const cardsKnown = loadError === null && (!loading || configs.length > 0);
 
   return (
     <VStack gap={5}>
@@ -398,6 +421,14 @@ export function AIProvidersView() {
         </Card>
       ) : null}
 
+      {loading && !cardsKnown ? (
+        <Card variant="glass" padding={4}>
+          <LoadingState variant="spinner" label="Loading provider configuration" />
+        </Card>
+      ) : null}
+
+      {cardsKnown ? (
+        <>
       {PROVIDER_REGISTRY.map((definition) => {
         const config = configs.find((entry) => entry.provider === definition.providerId);
         const status = config === undefined ? null : describeConnectionStatus(config);
@@ -561,6 +592,8 @@ export function AIProvidersView() {
           documentation, and a context window is shown only where the provider publishes one.
         </Text>
       </Card>
+        </>
+      ) : null}
 
       <Modal
         visible={editing !== null}
@@ -577,7 +610,8 @@ export function AIProvidersView() {
               label="Save provider"
               variant="primary"
               onPress={() => void handleSave()}
-              loading={saving}
+              loading={saving || submitting}
+              disabled={submitting}
             />
           </HStack>
         }
@@ -603,7 +637,7 @@ export function AIProvidersView() {
             </VStack>
             <Pressable
               accessibilityRole="switch"
-              accessibilityState={{ checked: draftEnabled }}
+              accessibilityState={{ checked: draftEnabled, disabled: !canManage }}
               accessibilityLabel={`${editingDefinition?.displayName ?? 'Provider'} enabled`}
               disabled={!canManage}
               onPress={() => {
@@ -637,7 +671,7 @@ export function AIProvidersView() {
             </VStack>
             <Pressable
               accessibilityRole="switch"
-              accessibilityState={{ checked: draftDefault, disabled: !draftEnabled }}
+              accessibilityState={{ checked: draftDefault, disabled: !draftEnabled || !canManage }}
               accessibilityLabel={`${editingDefinition?.displayName ?? 'Provider'} is the default`}
               disabled={!canManage || !draftEnabled}
               onPress={() => setDraftDefault((value) => !value)}
@@ -690,10 +724,6 @@ export function AIProvidersView() {
           </VStack>
         </VStack>
       </Modal>
-
-      {loading ? (
-        <Text tone="tertiary">Loading provider configuration…</Text>
-      ) : null}
     </VStack>
   );
 }

@@ -62,6 +62,7 @@ export function UserMenu() {
       <Pressable
         onPress={() => setOpen((previous) => !previous)}
         accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
         accessibilityLabel={`Account menu. Signed in as ${displayName}`}
         tabIndex={0}
         style={({ pressed }) => ({
@@ -105,7 +106,7 @@ export function UserMenu() {
           <View style={{ padding: theme.space[2] }}>
             <MenuRow
               icon="user"
-              label="Profile"
+              label="More"
               onPress={() => navigate('/more')}
             />
             <MenuRow

@@ -17,6 +17,9 @@
  * projects forward rather than summarising. It is capped, and the cap is stated on
  * screen when it bites rather than silently truncating.
  */
+import { Pressable } from 'react-native';
+import { useRouter } from 'expo-router';
+
 import {
   Badge,
   Card,
@@ -276,6 +279,7 @@ function DeadlineList({
   readonly undated: number;
 }) {
   const s = useStyles(styles);
+  const router = useRouter();
 
   if (entries.length === 0) {
     return (
@@ -290,47 +294,54 @@ function DeadlineList({
   return (
     <VStack gap={3} style={s.deadline}>
       {entries.map((entry) => (
-        <VStack key={entry.projectId} gap={1} style={s.deadlineRow}>
-          <HStack gap={3} align="center">
-            <VStack
-              gap={1}
-              style={[
-                s.deadlineMain,
-                entry.isOverdue ? s.overdueBar : entry.daysUntil <= 7 ? s.soonBar : null,
-              ]}
-            >
-              <Text variant="bodySm" tone="primary" numberOfLines={1}>
-                {entry.name}
-              </Text>
-              <HStack gap={2} align="center">
-                <Text variant="caption" tone="tertiary">
-                  {PROJECT_STATUS_LABELS[entry.status]} · {formatDateShort(entry.targetDate)}
+        <Pressable
+          key={entry.projectId}
+          accessibilityRole="link"
+          accessibilityLabel={`${entry.name}, open project`}
+          onPress={() => router.push(`/projects/${entry.projectId}`)}
+        >
+          <VStack gap={1} style={s.deadlineRow}>
+            <HStack gap={3} align="center">
+              <VStack
+                gap={1}
+                style={[
+                  s.deadlineMain,
+                  entry.isOverdue ? s.overdueBar : entry.daysUntil <= 7 ? s.soonBar : null,
+                ]}
+              >
+                <Text variant="bodySm" tone="primary" numberOfLines={1}>
+                  {entry.name}
                 </Text>
-              </HStack>
-            </VStack>
-            <VStack gap={1} align="flex-end">
-              <Badge
-                label={
-                  entry.isOverdue
-                    ? `${formatNumber(Math.abs(entry.daysUntil))}d late`
-                    : entry.daysUntil === 0
-                      ? 'Due today'
-                      : `${formatNumber(entry.daysUntil)}d left`
-                }
-                intent={entry.isOverdue ? 'danger' : entry.daysUntil <= 7 ? 'warning' : 'neutral'}
-                variant="soft"
-                size="sm"
-              />
-            </VStack>
-          </HStack>
-          <ProgressBar
-            value={progressToRatio(entry.progress)}
-            showValue
-            thickness={4}
-            label={`${entry.name} progress`}
-            intent={entry.isOverdue ? 'danger' : 'accent'}
-          />
-        </VStack>
+                <HStack gap={2} align="center">
+                  <Text variant="caption" tone="tertiary">
+                    {PROJECT_STATUS_LABELS[entry.status]} · {formatDateShort(entry.targetDate)}
+                  </Text>
+                </HStack>
+              </VStack>
+              <VStack gap={1} align="flex-end">
+                <Badge
+                  label={
+                    entry.isOverdue
+                      ? `${formatNumber(Math.abs(entry.daysUntil))}d late`
+                      : entry.daysUntil === 0
+                        ? 'Due today'
+                        : `${formatNumber(entry.daysUntil)}d left`
+                  }
+                  intent={entry.isOverdue ? 'danger' : entry.daysUntil <= 7 ? 'warning' : 'neutral'}
+                  variant="soft"
+                  size="sm"
+                />
+              </VStack>
+            </HStack>
+            <ProgressBar
+              value={progressToRatio(entry.progress)}
+              showValue
+              thickness={4}
+              label={`${entry.name} progress`}
+              intent={entry.isOverdue ? 'danger' : 'accent'}
+            />
+          </VStack>
+        </Pressable>
       ))}
 
       <Divider subtle />

@@ -24,6 +24,7 @@ import {
   Card,
   createStyles,
   EmptyState,
+  ErrorState,
   HStack,
   MetricCard,
   ScreenContainer,
@@ -171,6 +172,25 @@ export function WorkforceView() {
         />
       </VStack>
 
+      {/*
+        A failed roster read must render as a failure, never as "No people recorded
+        yet". That empty state is a claim about the DATA; a network refusal proves
+        nothing about it, and the two must not be confused.
+      */}
+      {directory.error !== null ? (
+        <ErrorState
+          inline
+          kind="network"
+          title="The roster did not load"
+          message={directory.error}
+          onRetry={() => {
+            void directory.refresh();
+            void access.refresh();
+          }}
+        />
+      ) : null}
+
+      {directory.error === null ? (
       <VStack style={s.columns}>
         <Card variant="glass" padding={4} style={s.column}>
           <VStack gap={3}>
@@ -206,6 +226,7 @@ export function WorkforceView() {
           </VStack>
         </Card>
       </VStack>
+      ) : null}
 
       <Text variant="caption" tone="tertiary">
         This is a directory of people and their employment state. Shifts, hours,
@@ -213,7 +234,7 @@ export function WorkforceView() {
         shown or estimated here.
       </Text>
 
-      {isLoaded && rows.length === 0 ? (
+      {directory.error === null && isLoaded && rows.length === 0 ? (
         <EmptyState
           inline
           variant="firstRun"

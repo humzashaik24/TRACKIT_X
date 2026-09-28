@@ -56,6 +56,13 @@ export interface UseAIProviderConfigsResult {
   readonly saving: boolean;
   readonly busyProvider: AIProviderId | null;
   readonly error: AppError | null;
+  /**
+   * The last READ error, kept separate from `error` so the screen can tell "the
+   * list never loaded" (render an error state, show no provider cards) apart from
+   * "the list is fine, a mutation just failed" (show the cards with a banner).
+   * Null once a read for the current organization has succeeded.
+   */
+  readonly loadError: AppError | null;
   /** From the organization's own membership row. Drives every write control. */
   readonly canManage: boolean;
   readonly defaultResolution: DefaultProviderResolution;
@@ -131,7 +138,8 @@ export function useAIProviderConfigs(): UseAIProviderConfigsResult {
     [isCurrent, loadState.configs],
   );
   const loading = organizationId !== null && (!isCurrent || fetching);
-  const error = actionError ?? (isCurrent ? loadState.error : null);
+  const loadError = isCurrent ? loadState.error : null;
+  const error = actionError ?? loadError;
 
   const defaultResolution = useMemo(() => resolveDefaultProvider(configs), [configs]);
 
@@ -288,6 +296,7 @@ export function useAIProviderConfigs(): UseAIProviderConfigsResult {
     saving,
     busyProvider,
     error,
+    loadError,
     canManage,
     defaultResolution,
     gateway,

@@ -91,12 +91,18 @@ export function ErrorState({
   const medallion = inline ? 44 : 64;
   // A retry button is only drawn when this kind of failure can actually be retried.
   const showRetry = onRetry !== undefined && copy.retryable;
+  const hasInteractive = showRetry || secondaryAction !== undefined;
+  const alertCopy = `${title ?? copy.title}. ${message ?? copy.message}`;
 
   return (
     <View
-      accessible
-      accessibilityRole="alert"
-      accessibilityLabel={`${title ?? copy.title}. ${message ?? copy.message}`}
+      // The alert must exist as an accessible boundary whether or not there are
+      // buttons. When there are (retry, secondary), the container stays unfocused
+      // and the headline/copy announce as their own alert; without them the whole
+      // block flattens into one alert. Either way the retry button stays reachable.
+      accessible={!hasInteractive}
+      accessibilityRole={hasInteractive ? undefined : 'alert'}
+      accessibilityLabel={hasInteractive ? undefined : alertCopy}
       style={[
         {
           alignItems: 'center',
@@ -109,28 +115,39 @@ export function ErrorState({
       ]}
     >
       <View
+        accessible={hasInteractive}
+        accessibilityRole={hasInteractive ? 'alert' : undefined}
+        accessibilityLabel={hasInteractive ? alertCopy : undefined}
         style={{
-          width: medallion,
-          height: medallion,
-          borderRadius: radius.pill,
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: theme.colors.danger.subtle,
-          borderWidth: 1,
-          borderColor: theme.colors.danger.border,
+          gap: inline ? space[3] : space[4],
         }}
       >
-        <Icon name={copy.icon} size={inline ? 'lg' : '2xl'} tone="danger" />
-      </View>
+        <View
+          style={{
+            width: medallion,
+            height: medallion,
+            borderRadius: radius.pill,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: theme.colors.danger.subtle,
+            borderWidth: 1,
+            borderColor: theme.colors.danger.border,
+          }}
+        >
+          <Icon name={copy.icon} size={inline ? 'lg' : '2xl'} tone="danger" />
+        </View>
 
-      <VStack gap={1.5} align="center" style={{ maxWidth: 440 }}>
-        <Text variant={inline ? 'h4' : 'h3'} align="center">
-          {title ?? copy.title}
-        </Text>
-        <Text variant="bodySm" tone="secondary" align="center">
-          {message ?? copy.message}
-        </Text>
-      </VStack>
+        <VStack gap={1.5} align="center" style={{ maxWidth: 440 }}>
+          <Text variant={inline ? 'h4' : 'h3'} align="center">
+            {title ?? copy.title}
+          </Text>
+          <Text variant="bodySm" tone="secondary" align="center">
+            {message ?? copy.message}
+          </Text>
+        </VStack>
+      </View>
 
       {(showRetry || secondaryAction !== undefined) && (
         <HStack gap={2} wrap justify="center">

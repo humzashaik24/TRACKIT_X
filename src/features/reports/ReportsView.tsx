@@ -114,7 +114,7 @@ export function ReportsView() {
             />
           }
         >
-          <Card variant="outline" intent="danger" padding={4}>
+          <Card variant="outline" intent="danger" padding={4} accessibilityRole="alert">
             <HStack gap={3} align="flex-start">
               <Icon name="warning" size="md" tone="danger" />
               <VStack gap={1} style={s.grow}>

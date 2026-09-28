@@ -28,7 +28,7 @@
  * the two disagreeing.
  */
 import { useCallback, useMemo, useState } from 'react';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { PageHeader } from '@/components/navigation/PageHeader';
@@ -42,6 +42,7 @@ import {
   EmptyState,
   ErrorState,
   HStack,
+  Icon,
   Input,
   Modal,
   ProgressBar,
@@ -594,7 +595,26 @@ export function TaskDetailView() {
     >
       <PageHeader
         title={task.title}
-        description={shownProjectName ?? 'No project'}
+        description={
+          task !== null && task.project_id !== null && projectNameById.has(task.project_id) ? (
+            <Pressable
+              accessibilityRole="link"
+              accessibilityLabel={`Project ${shownProjectName}`}
+              onPress={() => router.push(`/projects/${task.project_id}`)}
+              style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, alignSelf: 'flex-start' })}
+            >
+              <HStack gap={1} align="center">
+                <Icon name="externalLink" size="sm" tone="accent" />
+                <Text variant="body" tone="accent">
+                  {shownProjectName}
+                </Text>
+                <Icon name="chevronRight" size="sm" tone="accent" />
+              </HStack>
+            </Pressable>
+          ) : (
+            (shownProjectName ?? 'No project')
+          )
+        }
         breadcrumbs={deriveBreadcrumbs(`/tasks/${taskId}`)}
         status={
           <HStack gap={2} align="center" wrap>

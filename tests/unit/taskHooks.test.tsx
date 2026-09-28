@@ -45,9 +45,9 @@ const taskService = require('@/services/taskService') as {
 const ORG_A = 'org-a';
 const ORG_B = 'org-b';
 
-const taskRow = (id: string, title: string) => ({
+const taskRow = (id: string, title: string, organizationId: string = ORG_A) => ({
   id,
-  organization_id: ORG_A,
+  organization_id: organizationId,
   project_id: null,
   assignee_id: null,
   title,
@@ -208,7 +208,7 @@ describe('useTaskDetail — the organization switch', () => {
 
     const hook = renderHook((id) => useTaskDetail(id, 'task-1'));
 
-    taskService.getTask.mockResolvedValue(ok(taskRow('task-1', 'B work')));
+    taskService.getTask.mockResolvedValue(ok(taskRow('task-1', 'B work', ORG_B)));
     hook.switchTo(ORG_B);
     await flush();
 
@@ -230,7 +230,7 @@ describe('useTaskDetail — the organization switch', () => {
 
     const hook = renderHook((id) => useTaskDetail(id, 'task-1'));
 
-    taskService.getTask.mockResolvedValue(ok(taskRow('task-1', 'B work')));
+    taskService.getTask.mockResolvedValue(ok(taskRow('task-1', 'B work', ORG_B)));
     hook.switchTo(ORG_B);
     await flush();
 
@@ -239,6 +239,42 @@ describe('useTaskDetail — the organization switch', () => {
     });
 
     expect(hook.latest().notFound).toBe(false);
+    expect(hook.latest().error).toBeNull();
+  });
+
+  it('hides a task whose own organization is not the organization in view', async () => {
+    // The pair tag stops another tenant's RESPONSE from rendering under the header,
+    // but it cannot see what row a response holds. RLS scopes `getTask`, so a row
+    // from another organization should never arrive — but if it does, showing it
+    // would be the exact leak the tag exists to prevent, so it renders as not-found
+    // instead of displaying data it has no right to show.
+    const foreign = { ...taskRow('task-1', 'B work'), organization_id: ORG_B };
+    taskService.getTask.mockResolvedValue(ok(foreign));
+
+    const hook = renderHook((id) => useTaskDetail(id, 'task-1'));
+    await flush();
+
+    expect(hook.latest().notFound).toBe(true);
+    expect(hook.latest().task).toBeNull();
+    expect(hook.latest().error).toBeNull();
+  });
+
+  it('removes a task on refresh that turned out to belong to another organization', async () => {
+    taskService.getTask.mockResolvedValue(ok(taskRow('task-1', 'A work')));
+    const hook = renderHook((id) => useTaskDetail(id, 'task-1'));
+    await flush();
+
+    expect(hook.latest().notFound).toBe(false);
+
+    const foreign = { ...taskRow('task-1', 'A work'), organization_id: ORG_B };
+    taskService.getTask.mockResolvedValue(ok(foreign));
+
+    await act(async () => {
+      await hook.latest().refresh();
+    });
+
+    expect(hook.latest().notFound).toBe(true);
+    expect(hook.latest().task).toBeNull();
     expect(hook.latest().error).toBeNull();
   });
 });

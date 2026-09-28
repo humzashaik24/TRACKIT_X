@@ -42,7 +42,11 @@ export interface PageHeaderAction {
 
 export interface PageHeaderProps {
   title: string;
-  description?: string;
+  /**
+   * One line under the title. A string renders as body text; a node lets a screen
+   * embed a link (the task detail screen links its project name to the project).
+   */
+  description?: ReactNode;
   icon?: IconName;
   /** Optional status content — a badge, a chip, or a row of both. */
   status?: ReactNode | null;

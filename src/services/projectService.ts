@@ -184,22 +184,31 @@ export async function countProjects(
   return ok(result.value);
 }
 
-export async function getProject(projectId: string): Promise<ActionResult<ProjectRow>> {
+/**
+ * One project, with its owner named — the detail twin of the list entry.
+ *
+ * The owner embed uses the SAME select as the list, so the detail header and the
+ * list column can never disagree about who is accountable, and the detail screen
+ * does not need a second read for one name. A project that RLS does not hand back
+ * is NOT_FOUND (an empty state, never an error), so a refusal cannot confirm that a
+ * row exists in an organization the caller cannot see.
+ */
+export async function getProject(projectId: string): Promise<ActionResult<ProjectListEntry>> {
   const result = await attempt(async () => {
     const { data, error } = await supabase
       .from('projects')
-      .select('*')
+      .select(PROJECT_SELECT)
       .eq('id', projectId)
       .maybeSingle();
     if (error !== null) throw error;
-    return data;
+    return data as unknown as ProjectRowWithOwner | null;
   }, 'NETWORK_UNAVAILABLE');
 
   if (!result.ok) return result;
   if (result.value === null) {
     return err(appError('NOT_FOUND', 'Project not visible to the caller'));
   }
-  return ok(result.value);
+  return ok(toListEntry(result.value));
 }
 
 /** Projects somebody is on, for the "my work" view. Empty is an ordinary answer. */

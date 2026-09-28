@@ -342,6 +342,32 @@ export function referenceIndex(
   return index;
 }
 
+/**
+ * Where "open this citation" should go.
+ *
+ * A citation must lead somewhere the reader can verify it. Projects and tasks
+ * have detail screens that take the record's real id, so both map straight to a
+ * route. Employees have no detail screen yet — a task's assigned employee is
+ * shown as a badge, not linked — so an employee citation resolves to NOTHING
+ * until that screen exists. The alternative, pointing "employee" at the People
+ * list, does not verify the citation, so it is refused as unverifiable.
+ */
+export type CopilotReferenceRoute =
+  | { readonly ok: true; readonly path: string }
+  | { readonly ok: false };
+
+export function copilotReferenceRoute(
+  reference: CopilotReference,
+): CopilotReferenceRoute {
+  if (reference.entity === 'project') {
+    return { ok: true, path: `/projects/${reference.entityId}` };
+  }
+  if (reference.entity === 'task') {
+    return { ok: true, path: `/tasks/${reference.entityId}` };
+  }
+  return { ok: false };
+}
+
 // ---------------------------------------------------------------------------
 // Response
 // ---------------------------------------------------------------------------

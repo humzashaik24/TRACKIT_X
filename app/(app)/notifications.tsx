@@ -24,7 +24,7 @@ import { useNotifications } from '@/features/notifications/useNotifications';
 import { deriveBreadcrumbs } from '@/navigation/breadcrumbs';
 
 export default function NotificationsScreen() {
-  const { view, unreadCount } = useNotifications();
+  const { view, unreadCount, refresh } = useNotifications();
 
   return (
     <ScreenContainer
@@ -43,7 +43,14 @@ export default function NotificationsScreen() {
       )}
 
       {view.kind === 'error' && (
-        <ErrorState kind="network" message={view.message} inline />
+        <ErrorState
+          kind="network"
+          message={view.message}
+          inline
+          onRetry={() => {
+            void refresh();
+          }}
+        />
       )}
 
       {view.kind === 'empty' && (

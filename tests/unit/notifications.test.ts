@@ -7,6 +7,7 @@
  */
 import {
   hasUnread,
+  notificationDestination,
   NOTIFICATION_KIND_LABELS,
   unreadCountOf,
   viewOf,
@@ -78,5 +79,42 @@ describe('NOTIFICATION_KIND_LABELS', () => {
     for (const kind of ['alert', 'mention', 'approval', 'system'] as const) {
       expect(NOTIFICATION_KIND_LABELS[kind].length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('notificationDestination', () => {
+  it('accepts the route families the app serves, with their record id', () => {
+    expect(notificationDestination('/projects/p1')).toEqual({
+      ok: true,
+      raw: '/projects/p1',
+      path: '/projects/p1',
+    });
+    expect(notificationDestination('/tasks/t1')).toEqual({
+      ok: true,
+      raw: '/tasks/t1',
+      path: '/tasks/t1',
+    });
+    const more = notificationDestination('/more');
+    expect(more).toEqual({ ok: true, raw: '/more', path: '/more' });
+    const reports = notificationDestination('/reports');
+    expect(reports).toEqual({ ok: true, raw: '/reports', path: '/reports' });
+  });
+
+  it('accepts record ids built from the same alphabet as the app ids', () => {
+    // `organization_id`-shaped ids are not validated further: RLS scopes the reads.
+    expect(notificationDestination('/projects/123e4567-e89b-12d3-a456-426614174000').ok).toBe(true);
+  });
+
+  it('refuses anything the router cannot be trusted to open', () => {
+    expect(notificationDestination('').ok).toBe(false);
+    expect(notificationDestination('/projects').ok).toBe(false);
+    expect(notificationDestination('/projects/p1/tasks').ok).toBe(false);
+    expect(notificationDestination('/tasks/../projects/p1').ok).toBe(false);
+    expect(notificationDestination('https://example.com').ok).toBe(false);
+    expect(notificationDestination('mailto:a@b.c').ok).toBe(false);
+    expect(notificationDestination('//example.com/path').ok).toBe(false);
+    expect(notificationDestination('/settings?next=/reports').ok).toBe(false);
+    expect(notificationDestination('/projects/pa/th').ok).toBe(false);
+    expect(notificationDestination('/projects/a b').ok).toBe(false);
   });
 });
