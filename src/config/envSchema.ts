@@ -161,6 +161,11 @@ export const forbiddenPublicSuffixes: readonly string[] = [
   'SECRET',
   'GEMINI_API_KEY',
   'GOOGLE_API_KEY',
+  'OPENAI_API_KEY',
+  'ANTHROPIC_API_KEY',
+  // The generic suffix catches the next provider before it is remembered here.
+  // Any `EXPO_PUBLIC_*API_KEY` is a credential, whatever provider issues it.
+  'API_KEY',
   'DATABASE_URL',
   'DB_PASSWORD',
   'PASSWORD',
@@ -217,6 +222,53 @@ export function describeFailure(error: z.ZodError): string {
 }
 
 /**
+ * True when a Supabase URL points at a development-only server on this machine.
+ *
+ * Production builds must never connect to one of these. A production `.env` that
+ * points at a loopback host is a development file that shipped: the app would
+ * start, render the live shell, and fail on the first query with network errors
+ * nobody recognises as a configuration mistake — so the build refuses instead.
+ */
+export function isLoopbackSupabaseUrl(value: string): boolean {
+  let host: string;
+  try {
+    host = new URL(value).hostname;
+  } catch {
+    // Not a URL at all. The schema already refused it; return false so this
+    // guard does not become the reason a malformed value is reported.
+    return false;
+  }
+  return (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host === '[::1]' ||
+    host === '0.0.0.0' ||
+    host.startsWith('127.') ||
+    host.endsWith('.localhost')
+  );
+}
+
+/**
+ * The message thrown when a production build names a loopback Supabase project.
+ *
+ * The offending value is deliberately not echoed: an error report is not a place
+ * for a URL, which can carry embedded credentials.
+ */
+export function describeProductionLoopback(): string {
+  return [
+    'Refusing to start: EXPO_PUBLIC_SUPABASE_URL points at a local server in a production build.',
+    '',
+    'Production must connect to a hosted Supabase project:',
+    '  https://<project-ref>.supabase.co',
+    '',
+    'A production build pointed at a loopback host would start and show the live',
+    'shell, then fail on the first query with errors that look like an outage.',
+    'Set EXPO_PUBLIC_SUPABASE_URL to the hosted project URL before building.',
+  ].join('\n');
+}
+
+/**
  * Validates a raw record and derives the convenience flags. Pure: it neither
  * reads `process.env` nor caches, so tests can drive every branch.
  */
@@ -232,6 +284,18 @@ export function resolveClientEnv(raw: Readonly<Record<string, unknown>>): Client
   }
 
   const value = parsed.data;
+
+  /*
+   * Production must point at a hosted Supabase project. A loopback URL in a
+   * production build is a development `.env` that shipped, and the failure is
+   * silent unless it is refused here: nothing else would tell the builder apart
+   * from "the database is down". Development and staging are unchanged — a
+   * developer pointing at `supabase start` is the normal case, and staging is
+   * documented as requiring an explicit hosted project too.
+   */
+  if (value.appEnv === 'production' && isLoopbackSupabaseUrl(value.supabaseUrl)) {
+    throw new Error(describeProductionLoopback());
+  }
 
   const appEnv: AppEnvironment = value.appEnv;
   const dataMode = effectiveDataMode(appEnv, value.dataMode);

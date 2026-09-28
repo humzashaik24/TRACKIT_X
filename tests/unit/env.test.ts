@@ -236,3 +236,110 @@ describe('data mode', () => {
     expect(effectiveDataMode('production', 'live')).toBe('live');
   });
 });
+/**
+ * Phase 41 — production-readiness regressions.
+ *
+ * Two findings from the Phase 41 configuration audit became tests here:
+ *
+ *   1. The deny-list's coverage of provider names was provider-specific — Gemini
+ *      was listed, OpenAI and Anthropic were not, so an `EXPO_PUBLIC_OPENAI_API_KEY`
+ *      would have shipped. The list now ends in the generic `API_KEY` suffix.
+ *
+ *   2. `clientEnvSchema` accepted a loopback Supabase URL in a PRODUCTION build.
+ *      A production `.env` copied from development would start, show the live
+ *      shell, and fail on the first query with errors that look like an outage.
+ *      `resolveClientEnv` now refuses a production build that names one.
+ *
+ * The data-mode block also repeats the production/demo matrix at the
+ * `resolveClientEnv` boundary — the function the application actually imports —
+ * so the lockout is asserted where it is consumed, not only inside the helper.
+ */
+describe('Phase 41 — cluster boundary and data-mode regressions', () => {
+  it('the deny-list covers every provider credential name', () => {
+    expect(forbiddenPublicSuffixes).toContain('OPENAI_API_KEY');
+    expect(forbiddenPublicSuffixes).toContain('ANTHROPIC_API_KEY');
+    expect(forbiddenPublicSuffixes).toContain('API_KEY');
+  });
+
+  it.each([
+    'EXPO_PUBLIC_OPENAI_API_KEY',
+    'EXPO_PUBLIC_ANTHROPIC_API_KEY',
+    'EXPO_PUBLIC_GEMINI_API_KEY',
+    'EXPO_PUBLIC_GOOGLE_API_KEY',
+    'EXPO_PUBLIC_ANY_PROVIDER_API_KEY',
+  ])('detects %s before it can reach the bundle', (name) => {
+    expect(findLeakedSecrets({ [name]: 'anything' })).toEqual([name]);
+  });
+
+  it('leaves a named non-prefixed server variable alone', () => {
+    // Server-side variables have no EXPO_PUBLIC_ prefix and are not the client's
+    // business either way; the denial is specifically about the prefixed form.
+    expect(findLeakedSecrets({ OPENAI_API_KEY: 'server-only' })).toEqual([]);
+    expect(findLeakedSecrets({ ANTHROPIC_API_KEY: 'server-only' })).toEqual([]);
+  });
+
+  it.each([
+    'http://127.0.0.1:54321',
+    'http://localhost:54321',
+    'http://127.0.0.2:54321',
+    'http://0.0.0.0:54321',
+    'http://[::1]:54321',
+  ])('refuses a production build that points at %s', (url) => {
+    expect(() => resolveClientEnv({ ...validRaw, supabaseUrl: url })).toThrow(
+      /Refusing to start: EXPO_PUBLIC_SUPABASE_URL points at a local server/,
+    );
+  });
+
+  it('accepts a hosted project URL in production', () => {
+    const resolved = resolveClientEnv(validRaw);
+    expect(resolved.supabaseUrl).toBe('https://abcdefghijklmnop.supabase.co');
+  });
+
+  it('still lets development point at a local Supabase project', () => {
+    const resolved = resolveClientEnv({
+      appEnv: 'development',
+      supabaseUrl: 'http://127.0.0.1:54321',
+      supabasePublishableKey: validRaw.supabasePublishableKey,
+      debugLogging: 'false',
+    });
+    expect(resolved.supabaseUrl).toBe('http://127.0.0.1:54321');
+  });
+
+  it('does not echo the offending URL in the production refusal', () => {
+    let message = '';
+    try {
+      resolveClientEnv({ ...validRaw, supabaseUrl: 'http://localhost:54321' });
+    } catch (error) {
+      message = error instanceof Error ? error.message : '';
+    }
+    expect(message).not.toContain('localhost');
+    expect(message).not.toContain('54321');
+  });
+
+  // ── Data-mode safety at the resolve boundary (Phase 41 §13) ────────────────
+  it('production + explicit demo resolves to live with isDemoData false', () => {
+    const resolved = resolveClientEnv({ ...validRaw, dataMode: 'demo' });
+    expect(resolved.dataMode).toBe('live');
+    expect(resolved.isDemoData).toBe(false);
+  });
+
+  it('production + live is an accepted configuration', () => {
+    const resolved = resolveClientEnv({ ...validRaw, dataMode: 'live' });
+    expect(resolved.dataMode).toBe('live');
+    expect(resolved.isDemoData).toBe(false);
+  });
+
+  it('staging + demo requires the explicit variable; unset staging is live', () => {
+    expect(resolveClientEnv({ ...validRaw, appEnv: 'staging', dataMode: 'demo' }).dataMode).toBe(
+      'demo',
+    );
+    expect(resolveClientEnv({ ...validRaw, appEnv: 'staging' }).dataMode).toBe('live');
+  });
+
+  it('development + demo is the default and stays explicitly expressible', () => {
+    expect(resolveClientEnv({ ...validRaw, appEnv: 'development' }).dataMode).toBe('demo');
+    expect(
+      resolveClientEnv({ ...validRaw, appEnv: 'development', dataMode: 'demo' }).dataMode,
+    ).toBe('demo');
+  });
+});

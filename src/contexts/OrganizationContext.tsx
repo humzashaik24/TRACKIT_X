@@ -79,12 +79,34 @@ export interface OrganizationProviderProps {
  * would leave exactly that window open, and a stale tenant id riding into the next
  * session's queries is the single worst bug this file could have.
  */
-interface LoadedMemberships {
+export interface LoadedMemberships {
   readonly userId: string;
   readonly memberships: readonly organizations.Membership[];
   /** Non-null when the read failed. `memberships` is then empty and meaningless. */
   readonly error: AppError | null;
   readonly activeId: string | null;
+}
+
+/**
+ * A committed membership read counts only for the user it was read for.
+ *
+ * This is the derivation that keeps a previous account's organizations from
+ * rendering as the current account's. It is extracted as a pure function —
+ * rather than an inline expression inside the provider — so the one property
+ * this provider cannot afford to lose is a regression assertion instead of an
+ * implementation detail.
+ *
+ * `userId` comes from `user?.id ?? null`, so a signed-out user is `null` and a
+ * read committed under any real user id can never match it. A stale storage key
+ * or an in-flight read from the previous account is therefore invisible on the
+ * frame after sign-out, and after a new account signs in the new user id
+ * invalidates everything the old one saw.
+ */
+export function resolveMembershipsForUser(
+  loaded: LoadedMemberships | null,
+  userId: string | null,
+): LoadedMemberships | null {
+  return loaded !== null && loaded.userId === userId ? loaded : null;
 }
 
 export function OrganizationProvider({ children }: OrganizationProviderProps) {
@@ -158,7 +180,7 @@ export function OrganizationProvider({ children }: OrganizationProviderProps) {
 
   // ── Everything below is derived, not stored ────────────────────────────────
   // A committed read counts only for the user it was read for.
-  const fresh = loaded !== null && loaded.userId === userId ? loaded : null;
+  const fresh = resolveMembershipsForUser(loaded, userId);
 
   const status: OrganizationStatus =
     authStatus === 'restoring'
