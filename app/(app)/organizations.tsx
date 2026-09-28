@@ -1,15 +1,11 @@
 /**
- * Trackit X — organizations placeholder.
+ * Trackit X — workspaces.
  *
- * Part of the Phase 29 application shell. Every module in the information
- * architecture is wired in front, and a module with no tables behind it states
- * that plainly on its own screen rather than impersonating an empty list.
- * Copy comes from the destination table so the sidebar and this screen cannot
- * describe the module differently.
+ * A real screen: the memberships the header switch draws, the active workspace's
+ * details, and who has access to it.
  */
-import { ComingNext } from '@/components/navigation/ComingNext';
-import { destinationFor } from '@/navigation/destinations';
+import { OrganizationsView } from '@/features/organizations/OrganizationsView';
 
 export default function OrganizationsScreen() {
-  return <ComingNext destination={destinationFor('/organizations')} />;
+  return <OrganizationsView />;
 }

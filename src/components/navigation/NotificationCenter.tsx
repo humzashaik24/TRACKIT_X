@@ -31,7 +31,11 @@ export interface NotificationCenterProps {
   onClose: () => void;
 }
 
-function NotificationRow({ item }: { item: AppNotification }) {
+/**
+ * One notification as a row. Shared by the header popover and the full
+ * notifications screen so both render items identically.
+ */
+export function NotificationRow({ item }: { item: AppNotification }) {
   const theme = useTheme();
   const read = item.read;
 

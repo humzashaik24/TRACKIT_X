@@ -1,12 +1,11 @@
 /**
- * Trackit X — reports placeholder.
+ * Trackit X — reports.
  *
- * Phase 29 shell. See `organizations.tsx` for why a placeholder is preferable
- * to an empty list here.
+ * This workspace's figures, computed from its own records as of today. Same
+ * snapshot as the dashboard, presented as a dated page.
  */
-import { ComingNext } from '@/components/navigation/ComingNext';
-import { destinationFor } from '@/navigation/destinations';
+import { ReportsView } from '@/features/reports/ReportsView';
 
 export default function ReportsScreen() {
-  return <ComingNext destination={destinationFor('/reports')} />;
+  return <ReportsView />;
 }

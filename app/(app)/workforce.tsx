@@ -1,12 +1,11 @@
 /**
- * Trackit X — workforce placeholder.
+ * Trackit X — workforce.
  *
- * Phase 29 shell. See `organizations.tsx` for why a placeholder is preferable
- * to an empty list here.
+ * A real headcount screen: who is on the books, who has access, and how the
+ * roster splits by employment state and department.
  */
-import { ComingNext } from '@/components/navigation/ComingNext';
-import { destinationFor } from '@/navigation/destinations';
+import { WorkforceView } from '@/features/workforce/WorkforceView';
 
 export default function WorkforceScreen() {
-  return <ComingNext destination={destinationFor('/workforce')} />;
+  return <WorkforceView />;
 }

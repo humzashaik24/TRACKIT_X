@@ -1,8 +1,9 @@
 /**
  * Trackit X — application shell.
  *
- * The chrome around every signed-in screen: a floating glass tab bar on a phone,
- * a persistent sidebar on a desktop.
+ * The chrome around every signed-in screen: on a phone, a glass tab bar plus a
+ * slide-in navigation drawer; on a desktop, a section-grouped sidebar plus a top
+ * bar with global search, notifications and the workspace switcher.
  *
  * ── Why this is not `<Tabs>` ────────────────────────────────────────────────
  * Expo Router's tab navigator gives per-tab state retention — switch away from a
@@ -11,37 +12,47 @@
  *
  * That is a real trade-off, taken deliberately and worth stating rather than
  * discovering later. What it buys is one navigation model across three form
- * factors: the same six destinations render as a bottom bar, or as a sidebar, or
- * (later) as a sidebar plus a detail pane, without a tab navigator's assumption
- * that chrome lives at the bottom of the screen. Retention comes back when it is
- * needed, by lifting list state into a query cache — which is where it has to live
- * anyway for a shared list to stay consistent across two panes.
+ * factors: the same destinations render as a bottom bar, or as a sidebar, or as
+ * a drawer, without a tab navigator's assumption that chrome lives at the bottom
+ * of the screen. Retention comes back when it is needed, by lifting list state
+ * into a query cache — which is where it has to live anyway for a shared list to
+ * stay consistent across two panes.
+ *
+ * ── The chrome is composed, not re-implemented ──────────────────────────────
+ * The Phase 29 navigation components — `AppHeader`, `Sidebar`, `MobileDrawer` and
+ * `GlobalSearch` — were built and then left unwired. This shell now mounts them
+ * rather than drawing its own flat rail, so the information architecture
+ * (sections, readiness dots, bottom-bar subset) lives in the components and the
+ * destinations table, and the shell only owns the three states the chrome needs:
+ * whether the desktop sidebar is collapsed, whether the search overlay is open,
+ * and whether the mobile drawer is open.
  */
 import { router, usePathname } from 'expo-router';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Pressable, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
-  Badge,
   createStyles,
-  Divider,
   GlassSurface,
-  HStack,
   Icon,
   Text,
   useResponsive,
   useStyles,
   useTheme,
-  VStack,
 } from '@/design-system';
-import { ROLE_LABELS } from '@/domain/organization';
+import type { ROLE_LABELS } from '@/domain/organization';
 import {
   activeDestination,
-  destinations,
+  bottomBarDestinations,
   type Destination,
   type DestinationPath,
 } from '@/navigation/destinations';
+import { roleLabelFor, Sidebar } from './Sidebar';
+
+import { AppHeader } from './AppHeader';
+import { GlobalSearch } from './GlobalSearch';
+import { MobileDrawer } from './MobileDrawer';
 
 export interface AppShellProps {
   children: ReactNode;
@@ -50,8 +61,6 @@ export interface AppShellProps {
   /** The signed-in user's role, for the sidebar badge. */
   role: keyof typeof ROLE_LABELS | null;
 }
-
-const SIDEBAR_WIDTH = 268;
 
 const styles = createStyles((theme) => ({
   root: {
@@ -69,34 +78,8 @@ const styles = createStyles((theme) => ({
     // sidebar off-screen when a wide child (a table) exceeds the viewport.
     minWidth: 0,
   },
-
-  // --- Sidebar -------------------------------------------------------------
-  sidebar: {
-    width: SIDEBAR_WIDTH,
-    borderRightWidth: 1,
-    borderRightColor: theme.colors.borderSubtle,
-    backgroundColor: theme.colors.surface,
-    paddingHorizontal: theme.space[3],
-    paddingVertical: theme.space[5],
-    gap: theme.space[4],
-  },
-  sidebarHeader: {
-    paddingHorizontal: theme.space[2],
-    gap: theme.space[1],
-  },
-  railItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space[3],
-    paddingHorizontal: theme.space[3],
-    paddingVertical: theme.space[2.5],
-    borderRadius: theme.radius.md,
-  },
-  railItemActive: {
-    backgroundColor: theme.colors.accent.subtle,
-  },
-  railItemHovered: {
-    backgroundColor: theme.colors.surfaceHover,
+  contentFill: {
+    flex: 1,
   },
 
   // --- Bottom bar ----------------------------------------------------------
@@ -137,55 +120,17 @@ const styles = createStyles((theme) => ({
 }));
 
 function navigate(path: DestinationPath): void {
-  // `replace`, not `push`: the six destinations are peers, so stacking them would
-  // build a back stack of sideways moves and make the hardware back button walk
-  // through a history the user never intended to create.
+  // `replace`, not `push`: the six bottom-bar destinations are peers, so stacking
+  // them would build a back stack of sideways moves and make the hardware back
+  // button walk through a history the user never intended to create. The sidebar
+  // and drawer navigate with `push`, which is right for a tree-shaped history —
+  // going Home → Projects → Settings and pressing back should return, not quit.
   router.replace(path);
 }
 
 interface NavItemProps {
   destination: Destination;
   active: boolean;
-}
-
-function SidebarItem({ destination, active }: NavItemProps) {
-  const s = useStyles(styles);
-
-  return (
-    <Pressable
-      onPress={() => navigate(destination.path)}
-      accessibilityRole="link"
-      accessibilityState={{ selected: active }}
-      accessibilityLabel={
-        destination.ready
-          ? destination.longLabel
-          : `${destination.longLabel}, not available yet — ${destination.arrivesIn}`
-      }
-      // Only `pressed` is in React Native's Pressable state — `hovered` is a
-      // react-native-web extension and is not in the shared typings, so the
-      // hover affordance stays out until the web build needs it.
-      style={({ pressed }) => [
-        s.railItem,
-        active && s.railItemActive,
-        pressed && !active && s.railItemHovered,
-      ]}
-    >
-      <Icon
-        name={destination.icon}
-        size="md"
-        tone={active ? 'accent' : destination.ready ? 'secondary' : 'tertiary'}
-      />
-      <Text
-        variant="label"
-        tone={active ? 'accent' : destination.ready ? 'primary' : 'tertiary'}
-        numberOfLines={1}
-        style={{ flex: 1 }}
-      >
-        {destination.longLabel}
-      </Text>
-      {destination.ready ? null : <Badge label="Soon" intent="warning" variant="soft" size="sm" />}
-    </Pressable>
-  );
 }
 
 function BottomTab({ destination, active }: NavItemProps) {
@@ -232,48 +177,44 @@ export function AppShell({ children, organizationName, role }: AppShellProps) {
   const pathname = usePathname();
   const current = activeDestination(pathname);
 
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  const roleLabel = roleLabelFor(role);
+
+  const chrome = (
+    <AppHeader
+      onOpenMenu={() => setDrawerOpen(true)}
+      onOpenSearch={() => setSearchOpen(true)}
+      onToggleSidebar={() => setSidebarCollapsed((previous) => !previous)}
+      sidebarCollapsed={sidebarCollapsed}
+    />
+  );
+
   if (isWide) {
     return (
       <View style={s.wideRoot}>
-        <View style={[s.sidebar, { paddingTop: insets.top + theme.space[5] }]}>
-          <VStack gap={1} style={s.sidebarHeader}>
-            <HStack gap={2} align="center">
-              <Icon name="aiSpark" size="sm" tone="accent" />
-              <Text variant="overline" tone="tertiary" uppercase>
-                Trackit X
-              </Text>
-            </HStack>
-            <Text variant="h4" numberOfLines={2}>
-              {organizationName}
-            </Text>
-            {role === null ? null : (
-              <View style={{ alignSelf: 'flex-start' }}>
-                <Badge label={ROLE_LABELS[role]} intent="accent" variant="soft" size="sm" />
-              </View>
-            )}
-          </VStack>
-
-          <Divider />
-
-          <VStack gap={1}>
-            {destinations.map((destination) => (
-              <SidebarItem
-                key={destination.path}
-                destination={destination}
-                active={current?.path === destination.path}
-              />
-            ))}
-          </VStack>
+        <Sidebar
+          organizationName={organizationName}
+          roleLabel={roleLabel}
+          collapsed={sidebarCollapsed}
+        />
+        <View style={s.content}>
+          {chrome}
+          <View style={s.contentFill}>{children}</View>
         </View>
-
-        <View style={s.content}>{children}</View>
+        {searchOpen ? <GlobalSearch onClose={() => setSearchOpen(false)} /> : null}
       </View>
     );
   }
 
   return (
     <View style={s.root}>
-      <View style={s.content}>{children}</View>
+      <View style={s.content}>
+        {chrome}
+        <View style={s.contentFill}>{children}</View>
+      </View>
 
       <GlassSurface
         strong
@@ -290,7 +231,14 @@ export function AppShell({ children, organizationName, role }: AppShellProps) {
         // React Native accessibility role rather than a web-only ARIA value.
         accessibilityRole="tablist"
       >
-        {destinations.map((destination) => (
+        {/*
+         * The compact bar can hold only a handful of tabs, and which half dozen
+         * those are is decided in one place — `bottomBarDestinations` in
+         * `destinations.ts` — so the bar and the test suite cannot drift about the
+         * answer. Rendering the full `destinations` table here was a Phase 39
+         * audit finding: twenty-four tabs in a row is not navigation.
+         */}
+        {bottomBarDestinations.map((destination) => (
           <BottomTab
             key={destination.path}
             destination={destination}
@@ -298,6 +246,18 @@ export function AppShell({ children, organizationName, role }: AppShellProps) {
           />
         ))}
       </GlassSurface>
+
+      {drawerOpen ? (
+        <MobileDrawer onClose={() => setDrawerOpen(false)}>
+          <Sidebar
+            organizationName={organizationName}
+            roleLabel={roleLabel}
+            onNavigate={() => setDrawerOpen(false)}
+          />
+        </MobileDrawer>
+      ) : null}
+
+      {searchOpen ? <GlobalSearch onClose={() => setSearchOpen(false)} /> : null}
     </View>
   );
 }

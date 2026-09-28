@@ -117,9 +117,13 @@ describe('destinations — honesty of `ready`', () => {
     '/dashboard',
     '/employees',
     '/more',
+    '/notifications',
+    '/organizations',
     '/projects',
+    '/reports',
     '/settings',
     '/tasks',
+    '/workforce',
   ];
 
   it('marks exactly the finished screens as ready', () => {

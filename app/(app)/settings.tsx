@@ -1,65 +1,40 @@
 /**
  * Trackit X — Settings.
  *
- * The settings surface is now real in one section and honest about the rest.
+ * Organization-scoped configuration, built from what actually exists:
  *
- * AI Providers is built: an administrator can point the future Copilot at a
- * provider, choose its model, switch it on or off, and set the organization
- * default, with every one of those decisions enforced by the database.
+ *   · AI Providers — configure a provider, pick a model, and toggle the
+ *     organization default. Enforced by real database rows and policies.
+ *   · Organization — the record, with an edit surface for admin and owner,
+ *     who are the update policy's admitted roles.
+ *   · Preferences — the theme preference, the same control More offers.
  *
- * Organization and Preferences are listed as not built. They were previously
- * three tab chips that looked live and led to placeholder boxes, and a control
- * that cannot do its job is worse than an absent one. `updateOrganization()` and
- * the theme switch already exist in `more.tsx`, so the sections are named as
- * coming rather than duplicated badly here.
+ * Nothing here is a fake switch. The theme preference is persisted per device,
+ * the organization record is read and written through the real service, and
+ * provider settings are locked down by the structure described in
+ * `AIProvidersView`.
  */
-import { View } from 'react-native';
-
 import { BOTTOM_BAR_CLEARANCE } from '@/components/navigation/AppShell';
 import { PageHeader } from '@/components/navigation/PageHeader';
 import {
-  Badge,
   Card,
-  createStyles,
-  Divider,
   HStack,
   Icon,
   ScreenContainer,
+  Select,
   Text,
-  useStyles,
+  useThemeController,
   VStack,
 } from '@/design-system';
+import { useOrganization } from '@/contexts/OrganizationContext';
 import { AIProvidersView } from '@/features/ai-providers/AIProvidersView';
+import { OrganizationEditCard } from '@/features/organization/OrganizationEditCard';
+import { THEME_OPTIONS } from '@/features/theme/preferences';
 import { deriveBreadcrumbs } from '@/navigation/breadcrumbs';
 
-const styles = createStyles((theme) => ({
-  sectionHeader: {
-    alignItems: 'center',
-  },
-  sectionBody: {
-    gap: theme.space[1],
-    marginTop: theme.space[2],
-  },
-}));
-
-/** Sections named so an administrator can see the shape of what is coming. */
-const PENDING_SECTIONS = [
-  {
-    icon: 'organization' as const,
-    title: 'Organization',
-    description:
-      'Name, business type, timezone and currency. The record and the update service already exist; the form does not.',
-  },
-  {
-    icon: 'theme' as const,
-    title: 'Preferences',
-    description:
-      'Appearance, notifications and localisation. The theme preference lives in More for now.',
-  },
-];
-
 export default function SettingsScreen(): React.JSX.Element {
-  const s = useStyles(styles);
+  const { organization, role } = useOrganization();
+  const { preference, setPreference } = useThemeController();
 
   return (
     <ScreenContainer
@@ -76,30 +51,41 @@ export default function SettingsScreen(): React.JSX.Element {
       <VStack gap={5}>
         <AIProvidersView />
 
-        <Divider />
-
+        {/* ── Organization ─────────────────────────────────────────────────── */}
         <VStack gap={3}>
-          <HStack gap={2}>
-            <Icon name="more" size="sm" tone="tertiary" />
-            <Text variant="h4">Also in Settings</Text>
+          <HStack gap={2} align="center">
+            <Icon name="organization" size="sm" tone="tertiary" />
+            <Text variant="h4">Organization</Text>
           </HStack>
-
-          {PENDING_SECTIONS.map((section) => (
-            <Card key={section.title} variant="outline" padding={4}>
-              <View>
-                <HStack gap={2} style={s.sectionHeader}>
-                  <Icon name={section.icon} size="sm" tone="tertiary" />
-                  <Text variant="body" weight="semibold">
-                    {section.title}
-                  </Text>
-                  <Badge label="Not built" intent="neutral" variant="outline" size="sm" />
-                </HStack>
-                <Text tone="tertiary" style={s.sectionBody}>
-                  {section.description}
-                </Text>
-              </View>
+          {organization === null ? (
+            <Card variant="outline" padding={4}>
+              <Text variant="bodySm" tone="secondary">
+                No organization is selected. This should not be reachable — the
+                route gate sends a user without one to onboarding.
+              </Text>
             </Card>
-          ))}
+          ) : (
+            <OrganizationEditCard organization={organization} role={role} />
+          )}
+        </VStack>
+
+        {/* ── Preferences ──────────────────────────────────────────────────── */}
+        <VStack gap={3}>
+          <HStack gap={2} align="center">
+            <Icon name="theme" size="sm" tone="tertiary" />
+            <Text variant="h4">Preferences</Text>
+          </HStack>
+          <Select
+            label="Theme"
+            options={THEME_OPTIONS}
+            value={preference}
+            onChange={setPreference}
+            helperText="Saved on this device. Also available from More → Appearance."
+          />
+          <Text variant="caption" tone="tertiary">
+            Appearance is the only preference that exists yet. Notification
+            settings arrive with the notification source.
+          </Text>
         </VStack>
       </VStack>
     </ScreenContainer>

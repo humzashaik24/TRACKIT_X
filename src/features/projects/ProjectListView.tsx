@@ -19,6 +19,7 @@
  */
 import { useCallback, useMemo, useState } from 'react';
 import { View } from 'react-native';
+import { useRouter } from 'expo-router';
 
 import { BOTTOM_BAR_CLEARANCE } from '@/components/navigation/AppShell';
 import { PageHeader } from '@/components/navigation/PageHeader';
@@ -128,6 +129,7 @@ function sortRows(
 const PROJECT_PRIORITY_ORDER = { low: 0, medium: 1, high: 2, critical: 3 } as const;
 
 export function ProjectListView() {
+  const router = useRouter();
   const s = useStyles(styles);
   const { sectionGap } = useResponsive();
   const { organization, role } = useOrganization();
@@ -461,6 +463,9 @@ export function ProjectListView() {
         error={projects.error ?? undefined}
         onRetry={() => {
           void projects.refresh();
+        }}
+        onRowPress={(entry) => {
+          router.push(`/projects/${entry.project.id}`);
         }}
         accessibilityLabel="Projects"
         emptyTitle={projects.hasActiveFilters ? 'No projects match' : 'No projects yet'}

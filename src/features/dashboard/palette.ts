@@ -29,6 +29,7 @@
  */
 import type { Theme } from '@/design-system';
 import type { ProgressBand, WorkloadBand } from '@/domain/dashboard';
+import type { EmploymentStatus } from '@/domain/employee';
 import type { ProjectPriority, ProjectStatus } from '@/domain/project';
 import type { TaskPriority, TaskStatus } from '@/domain/task';
 
@@ -67,6 +68,33 @@ export function projectStatusColor(theme: Theme, status: ProjectStatus): string 
       return theme.colors.success.fg;
     case 'cancelled':
       return theme.colors.danger.fg;
+    default: {
+      const unreachable: never = status;
+      return unreachable;
+    }
+  }
+}
+
+/**
+ * The colour of a person's employment state.
+ *
+ * Mirrors the badge tones on the employees screen, so a bar and a badge about the
+ * same state are the same colour. `on_leave` and `inactive` are people-shaped
+ * facts rather than risks — like the badge mapping, they are deliberately not
+ * amber.
+ */
+export function employmentStatusColor(theme: Theme, status: EmploymentStatus): string {
+  switch (status) {
+    case 'active':
+      return theme.colors.success.fg;
+    case 'probation':
+      return theme.colors.info.fg;
+    case 'on_leave':
+      return theme.colors.neutral.fg;
+    case 'notice_period':
+      return theme.colors.warning.fg;
+    case 'inactive':
+      return theme.colors.neutral.fg;
     default: {
       const unreachable: never = status;
       return unreachable;
@@ -117,4 +145,12 @@ function rampAt(theme: Theme, index: number, last: number): string {
 }
 
 /** Re-exported so the section components import their types from one place. */
-export type { ProgressBand, ProjectPriority, ProjectStatus, TaskPriority, TaskStatus, WorkloadBand };
+export type {
+  EmploymentStatus,
+  ProgressBand,
+  ProjectPriority,
+  ProjectStatus,
+  TaskPriority,
+  TaskStatus,
+  WorkloadBand,
+};

@@ -1,17 +1,18 @@
 /**
  * Trackit X — GlobalSearch.
  *
- * The reusable search interface and its honest empty state. This phase builds
- * the FOUNDATION only: the overlay, the input, the scope copy, and the rule
- * that no invented result is ever shown. The modules search will eventually
- * cover — employees, projects, tasks, customers, vendors, inventory, documents,
- * knowledge — have no data source yet, so anything typed yields a state that
- * says so in words.
+ * The search overlay over the three data sources that exist — employees,
+ * projects and tasks — all scoped to the active organization. The matching is a
+ * pure function (`src/features/search/searchQuery.ts`) so it is testable without
+ * a renderer, and the reading happens through the same hooks the module screens
+ * use, so a result here is a record the module itself would show.
  *
- * When a searchable module lands, it registers a provider here; the UI below
- * does not change shape.
+ * The rule that governs the empty state is unchanged from the foundation: no
+ * result is ever invented. Opening with an empty query lists the modules search
+ * covers, and a term that matches nothing says so — it does not pad.
  */
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useRouter } from 'expo-router';
 import { Modal as RNModal, Pressable, ScrollView, View, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -23,7 +24,18 @@ import {
   Text,
   useResponsive,
   useTheme,
+  VStack,
 } from '@/design-system';
+import { useOrganization } from '@/contexts/OrganizationContext';
+import { useEmployeeDirectory } from '@/features/employees/useEmployeeDirectory';
+import { useProjectList } from '@/features/projects/useProjects';
+import {
+  runGlobalSearch,
+  SEARCH_GROUP_ORDER,
+  isWorthSearching,
+  type SearchResult,
+} from '@/features/search/searchQuery';
+import { useTaskList } from '@/features/tasks/useTasks';
 
 import { useEscapeToClose } from './useEscapeToClose';
 
@@ -31,27 +43,88 @@ export interface GlobalSearchProps {
   onClose: () => void;
 }
 
-/** What global search will cover once the modules exist — shown as scope. */
-const SEARCH_SCOPE: readonly { icon: 'employees' | 'projects' | 'tasks' | 'customers' | 'suppliers' | 'inventory' | 'documents' | 'knowledge'; label: string }[] = [
+/** What global search covers — the three modules with real records today. */
+const SEARCH_SCOPE: readonly { icon: 'employees' | 'projects' | 'tasks'; label: string }[] = [
   { icon: 'employees', label: 'Employees' },
   { icon: 'projects', label: 'Projects' },
   { icon: 'tasks', label: 'Tasks' },
-  { icon: 'customers', label: 'Customers' },
-  { icon: 'suppliers', label: 'Vendors' },
-  { icon: 'inventory', label: 'Inventory' },
-  { icon: 'documents', label: 'Documents' },
-  { icon: 'knowledge', label: 'Knowledge base' },
 ];
+
+/** One result group rendered in the overlay. */
+function ResultGroup({
+  title,
+  results,
+  onPick,
+}: {
+  title: string;
+  results: readonly SearchResult[];
+  onPick: (result: SearchResult) => void;
+}) {
+  const theme = useTheme();
+  if (results.length === 0) return null;
+  return (
+    <VStack gap={1}>
+      <Text variant="overline" tone="tertiary">
+        {title}
+      </Text>
+      <VStack gap={1}>
+        {results.map((result) => (
+          <Pressable
+            key={result.key}
+            onPress={() => onPick(result)}
+            accessibilityRole="button"
+            accessibilityLabel={`${result.title}, ${result.subtitle}`}
+            style={({ hovered }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: theme.space[3],
+              paddingHorizontal: theme.space[2],
+              paddingVertical: theme.space[2],
+              borderRadius: theme.radius.md,
+              backgroundColor: hovered ? theme.colors.surfaceHover : 'transparent',
+            })}
+          >
+            <VStack gap={0.5} style={{ flex: 1, minWidth: 0 }}>
+              <Text variant="body" tone="primary" numberOfLines={1}>
+                {result.title}
+              </Text>
+              <Text variant="caption" tone="tertiary" numberOfLines={1}>
+                {result.subtitle}
+              </Text>
+            </VStack>
+            <Icon name="chevronRight" size="sm" tone="tertiary" />
+          </Pressable>
+        ))}
+      </VStack>
+    </VStack>
+  );
+}
 
 export function GlobalSearch({ onClose }: GlobalSearchProps) {
   const theme = useTheme();
+  const router = useRouter();
   const { isCompact } = useResponsive();
   const insets = useSafeAreaInsets();
+  const { organization } = useOrganization();
+  const organizationId = organization?.id ?? null;
   const [query, setQuery] = useState('');
 
   useEscapeToClose(onClose);
 
-  const hasQuery = query.trim().length > 0;
+  const directory = useEmployeeDirectory(organizationId);
+  const projects = useProjectList(organizationId);
+  const tasks = useTaskList(organizationId);
+
+  const hasQuery = isWorthSearching(query);
+  const results = useMemo(
+    () => runGlobalSearch(query, directory.rows, projects.rows, tasks.rows),
+    [query, directory.rows, projects.rows, tasks.rows],
+  );
+
+  const pick = (result: SearchResult): void => {
+    onClose();
+    router.push(result.path);
+  };
 
   const panel: ViewStyle = isCompact
     ? {
@@ -91,7 +164,14 @@ export function GlobalSearch({ onClose }: GlobalSearchProps) {
         )}
         {isCompact ? (
           <View style={panel}>
-            <GlobalSearchBody query={query} setQuery={setQuery} hasQuery={hasQuery} isCompact />
+            <GlobalSearchBody
+              query={query}
+              setQuery={setQuery}
+              hasQuery={hasQuery}
+              results={results}
+              isCompact
+              onPick={pick}
+            />
           </View>
         ) : (
           <View
@@ -104,7 +184,14 @@ export function GlobalSearch({ onClose }: GlobalSearchProps) {
             }}
           >
             <View style={panel}>
-              <GlobalSearchBody query={query} setQuery={setQuery} hasQuery={hasQuery} isCompact={false} />
+              <GlobalSearchBody
+                query={query}
+                setQuery={setQuery}
+                hasQuery={hasQuery}
+                results={results}
+                isCompact={false}
+                onPick={pick}
+              />
             </View>
           </View>
         )}
@@ -117,12 +204,16 @@ function GlobalSearchBody({
   query,
   setQuery,
   hasQuery,
+  results,
   isCompact,
+  onPick,
 }: {
   query: string;
   setQuery: (value: string) => void;
   hasQuery: boolean;
+  results: ReturnType<typeof runGlobalSearch>;
   isCompact: boolean;
+  onPick: (result: SearchResult) => void;
 }) {
   const theme = useTheme();
 
@@ -132,38 +223,67 @@ function GlobalSearchBody({
         <SearchBar
           value={query}
           onChangeText={setQuery}
-          placeholder="Search your workspace…"
+          placeholder="Search employees, projects, tasks…"
           size={isCompact ? 'md' : 'lg'}
           autoFocus
           accessibilityLabel="Global search"
         />
         {!hasQuery && (
           <Text variant="caption" tone="tertiary">
-            Search across every module once the data behind them exists.
+            {'Results come from this workspace\'s own records.'}
           </Text>
         )}
       </View>
 
-      {hasQuery ? (
-        <View style={{ padding: theme.space[4] }}>
+      {hasQuery && results.none ? (
+        <View style={{ padding: theme.space[4], paddingTop: 0 }}>
           <EmptyState
             variant="noResults"
             icon="search"
-            title="Nothing to search yet"
-            description="Global search shows results from your own records. The modules it searches are not built in this phase, so nothing is returned — and nothing is invented to fill the space."
+            title="No matches in your records"
+            description="Nothing in this workspace matches that term. Results are never invented to fill the space."
             inline
           />
         </View>
-      ) : (
+      ) : null}
+
+      {hasQuery && !results.none ? (
+        <ScrollView
+          contentContainerStyle={{ padding: theme.space[3], paddingTop: 0, gap: theme.space[3] }}
+          showsVerticalScrollIndicator={false}
+          accessibilityRole="list"
+          accessibilityLabel={`${results.total} search results`}
+        >
+          {SEARCH_GROUP_ORDER.map((group) => {
+            const groupResults =
+              group === 'Employee'
+                ? results.employees
+                : group === 'Project'
+                  ? results.projects
+                  : results.tasks;
+            return (
+              <ResultGroup
+                key={group}
+                title={group}
+                results={groupResults}
+                onPick={onPick}
+              />
+            );
+          })}
+        </ScrollView>
+      ) : null}
+
+      {!hasQuery ? (
         <ScrollView
           contentContainerStyle={{
             padding: theme.space[4],
+            paddingTop: 0,
             gap: theme.space[1],
           }}
           showsVerticalScrollIndicator={false}
         >
           <Text variant="overline" tone="tertiary">
-            Will cover
+            Searches now
           </Text>
           {SEARCH_SCOPE.map((item) => (
             <HStack key={item.label} gap={2.5} style={{ paddingVertical: theme.space[1.5] }}>
@@ -172,7 +292,7 @@ function GlobalSearchBody({
             </HStack>
           ))}
         </ScrollView>
-      )}
+      ) : null}
     </>
   );
 }

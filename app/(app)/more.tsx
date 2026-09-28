@@ -43,7 +43,6 @@ import {
   useToast,
   VStack,
   type SelectOption,
-  type ThemePreference,
 } from '@/design-system';
 import {
   BUSINESS_TYPE_LABELS,
@@ -51,6 +50,7 @@ import {
   ROLE_DESCRIPTIONS,
   ROLE_LABELS,
 } from '@/domain/organization';
+import { THEME_OPTIONS } from '@/features/theme/preferences';
 import { deriveBreadcrumbs } from '@/navigation/breadcrumbs';
 
 const styles = createStyles((theme) => ({
@@ -73,17 +73,6 @@ const styles = createStyles((theme) => ({
     alignSelf: 'flex-start',
   },
 }));
-
-const THEME_OPTIONS: readonly SelectOption<ThemePreference>[] = [
-  { value: 'dark', label: 'Dark', description: 'The default. Built for long sessions.', icon: 'theme' },
-  { value: 'light', label: 'Light', description: 'For bright sites and daylight.', icon: 'theme' },
-  {
-    value: 'system',
-    label: 'Match device',
-    description: 'Follows your phone’s appearance setting.',
-    icon: 'settings',
-  },
-];
 
 /** A label/value pair. Values come from the database or the session, never invented. */
 function DetailRow({
