@@ -188,3 +188,80 @@ In order, with the current gateway flag left alone until the last step:
 5. Confirm isolation: a second organization, a real question, no cross-tenant data.
 6. Re-run the full suite and the secret scan over source and the built bundle.
 7. Only then set `GATEWAY_AVAILABLE = true`, and record the evidence in this file.
+
+---
+
+## Runtime activation verification pass (2026-09-28)
+
+Phase 38 was reviewed against commit `413db1d` with the sole goal of moving the
+runtime from "gated and unverified" to "real LLM, verified end to end". The pass
+did **not** rebuild, redesign or redeploy anything. `GATEWAY_AVAILABLE` was left
+alone. Docker was not used. No SQL was written.
+
+### Status
+
+| Claim | Value |
+|---|---|
+| **REAL LLM** | **NOT VERIFIED** |
+| Provider | **NONE** |
+| Model | **NONE** |
+| Connection | **NOT VERIFIED** |
+| Real Copilot generation | **NOT VERIFIED** |
+| UI rendering | **NOT VERIFIED** |
+| GATEWAY_AVAILABLE | **false** |
+| Live RLS matrix | **NOT VERIFIED** |
+
+### Why the runtime is blocked
+
+Two preconditions from step 1 and 2 of *To make the runtime real* could not be
+met in this environment, and section 3 of the activation brief requires stopping
+rather than faking a success when a credential is unavailable:
+
+1. **No hosted Supabase environment exists here.** The project has only ever been
+   pointed at the local Docker stack: `EXPO_PUBLIC_SUPABASE_URL` in `.env` is
+   `http://127.0.0.1:54321` (`supabase/config.toml` `api_url = "http://127.0.0.1"`).
+   Every Supabase CLI trace under `~/.supabase/traces` targets
+   `127.0.0.1:54322`. No `*.supabase.co` project URL, project ref, linked project
+   or service-role key exists on this machine, and Docker (the only way the local
+   stack runs) is forbidden in this workflow.
+2. **No AI provider credential is available.** No `GEMINI_API_KEY`,
+   `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` exists in `.env`, in the ambient
+   environment, or in any secure store reachable from here. The Edge Function's
+   Vault path (`ai_gateway_read_credential`) is therefore empty by construction,
+   and it is not permitted to ask for a key in chat or to invent one.
+
+Without a hosted project the Edge Function cannot be deployed; without a deployed
+Edge Function the Vault RPC cannot be reached; and without a stored credential no
+adapter can be selected and no provider call can be made. A live request would
+have failed at the very first gate (`AI_UNAVAILABLE`, gateway not deployed), so
+**no connection was attempted and no answer was generated**. Nothing was
+substituted for them.
+
+### What this pass did verify
+
+- `git status` clean against `413db1d`; nine pre-existing untracked files left
+  untouched; no history rewritten.
+- `npm run verify` — **PASS**, 26 suites, **856 tests**.
+- `npx tsc --noEmit` — **PASS**.
+- `eslint . --max-warnings=0` — **PASS**, zero warnings.
+- `npx expo export --platform web` — **PASS**.
+- Secret scan over `src`, `supabase`, `tests` and the built `dist/` bundle —
+  **NO SECRET LEAKAGE**. The only credential-shaped strings are synthetic test
+  fixtures (`FAKE_GEMINI_KEY`, `FAKE_ANTHROPIC_KEY`, `A_SESSION`) and the two
+  known bundle literals: the `service_role_key` field-name allowlist and the
+  `forbiddenPublicSuffixes` guard list. The gitignored
+  `supabase/.temp/start-secrets/**/docker.env` (local-stack leftovers, untracked)
+  holds local JWT fixtures and is not part of source, tests or the bundle.
+- `GATEWAY_AVAILABLE` correctly remains `false`; activation was not forced and no
+  client-side bypass exists. Failure handling for all eight documented codes
+  remains **UNIT TEST VERIFIED** only (see `docs/architecture/AI_GATEWAY_ARCHITECTURE.md`).
+- Demo data mode is active in development with no `EXPO_PUBLIC_DATA_MODE` set
+  (`effectiveDataMode` → `demo`), so the app is currently configured for
+  **demo business data + real (blocked) AI**.
+
+### Explicitly NOT verified (do not claim otherwise)
+
+Live connection test, real Copilot generation, rendered real response, live
+organization isolation matrix, and every "LIVE VERIFIED" failure case. These
+require the hosted project and a real credential, which do not exist in this
+environment.

@@ -190,6 +190,43 @@ Not available in production. See the table above.
 
 ---
 
+## Current development configuration (2026-09-28)
+
+**REAL LLM + DEMO BUSINESS DATA** is the intended development configuration:
+
+- **Demo business data**: `EXPO_PUBLIC_DATA_MODE` unset, `appEnv=development`
+  → `effectiveDataMode` resolves to `demo`; the Copilot reads the deterministic
+  fixture (`DEMO_ORGANIZATION_ID`) exactly as described above.
+- **Real LLM**: there is no mock provider and no local answer composer. Every turn
+  is meant to leave the device through `aiGatewayService` → the deployed Edge
+  Function → Vault → the real provider adapter → the real provider.
+
+The runtime is currently **blocked**, not simulated: as of the 2026-09-28
+verification pass there is no hosted Supabase project configured on this machine
+(`.env` points at the local Docker stack, `http://127.0.0.1:54321`), the
+`ai-gateway` Edge Function is not deployed to any project, and no provider
+credential exists in any secure store. `GATEWAY_AVAILABLE` therefore stays
+`false`, and no provider call has ever been made. See
+`docs/progress/PHASE_38_COMPLETE.md`.
+
+This composition is temporary and its boundary is the data feed, not the AI
+stack. The later migration replaces the fixture with real organization data:
+
+```
+DEMO BUSINESS DATA
+   buildDashboardSnapshot ─→ buildCopilotContext ─→ aiGatewayService
+   (the only thing that changes)
+REAL ORGANIZATION DATA
+```
+
+The AI half — gateway, Edge Function, Vault, adapter, provider, normalizer and
+UI — is identical in both rows of that table. Switching modes must be a change of
+source records plus the same effective-mode move that already exists
+(`EXPO_PUBLIC_DATA_MODE=live`, or a production build forcing `live`), never a
+change to the Copilot or the gateway.
+
+---
+
 ## Enabling the gateway
 
 `GATEWAY_AVAILABLE` in `src/domain/ai/gateway.ts` is `false`, and Phase 38 left it
